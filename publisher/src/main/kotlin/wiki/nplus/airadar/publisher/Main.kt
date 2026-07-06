@@ -50,10 +50,20 @@ fun main() {
         Files.createDirectories(target.parent)
         Files.writeString(target, DigestRenderer.renderDaily(day, items))
 
+        // The current ISO week's rollup is regenerated alongside the daily —
+        // same idempotency-by-regeneration strategy, no scheduler needed.
+        val weekStart = day.with(java.time.DayOfWeek.MONDAY)
+        val week = java.time.temporal.WeekFields.ISO.weekOfWeekBasedYear()
+        val isoWeekLabel = "%d-W%02d".format(day.get(java.time.temporal.WeekFields.ISO.weekBasedYear()), day.get(week))
+        val weekItems = repo.digestsForRange(weekStart, weekStart.plusDays(7))
+        val weeklyTarget = contentDir.resolve("weekly/$isoWeekLabel.md")
+        Files.createDirectories(weeklyTarget.parent)
+        Files.writeString(weeklyTarget, DigestRenderer.renderWeekly(weekStart, isoWeekLabel, weekItems))
+
         val commit = if (publishGit) gitCommitAndPush(contentDir, day) else null
         repo.transition(itemId, ItemState.DIGESTED, ItemState.PUBLISHED)
         repo.recordPublish("DAILY", target.toString(), commit, items.size, "SUCCESS")
-        log.info("published {} ({} items{})", target, items.size, commit?.let { ", commit $it" } ?: "")
+        log.info("published {} ({} items{}) + weekly {}", target, items.size, commit?.let { ", commit $it" } ?: "", isoWeekLabel)
     }
 }
 

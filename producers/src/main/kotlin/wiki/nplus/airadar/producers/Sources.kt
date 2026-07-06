@@ -1,0 +1,127 @@
+package wiki.nplus.airadar.producers
+
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import wiki.nplus.airadar.common.Config
+import wiki.nplus.airadar.common.ItemEnvelope
+import java.net.URI
+import java.net.URLEncoder
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.time.Duration
+import java.time.Instant
+import java.time.LocalDate
+
+private const val UA = "ai-radar/0.1 (personal project; +https://github.com/nplus-father/ai-radar)"
+
+private fun get(http: HttpClient, url: String, vararg headers: String): String {
+    val builder = HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(25)).header("User-Agent", UA)
+    headers.toList().chunked(2).forEach { (k, v) -> builder.header(k, v) }
+    val response = http.send(builder.GET().build(), HttpResponse.BodyHandlers.ofString())
+    check(response.statusCode() == 200) { "$url returned ${response.statusCode()}" }
+    return response.body()
+}
+
+/** New arXiv submissions in the configured categories (Atom API). */
+class ArxivSource(private val http: HttpClient) {
+    private val categories = Config.str("ARXIV_CATEGORIES", "cs.AI,cs.CL,cs.LG")
+
+    fun poll(): List<ItemEnvelope> {
+        val query = categories.split(',').joinToString("+OR+") { "cat:${it.trim()}" }
+        val xml = get(http, "https://export.arxiv.org/api/query?search_query=$query&sortBy=submittedDate&sortOrder=descending&max_results=${Config.int("ARXIV_MAX_RESULTS", 30)}")
+        return FeedParser.parse(xml).map { item ->
+            ItemEnvelope(
+                source = "arxiv",
+                externalId = item.id.substringAfterLast("/abs/").ifEmpty { item.id },
+                url = item.link,
+                title = item.title.replace(Regex("\\s+"), " "),
+                publishedAt = item.published,
+            )
+        }
+    }
+}
+
+/** Blog/news feeds (RSS or Atom), list configurable without redeploy. */
+class BlogsSource(private val http: HttpClient) {
+    private val feeds = Config.str(
+        "BLOG_FEEDS",
+        "https://openai.com/news/rss.xml,https://huggingface.co/blog/feed.xml,https://simonwillison.net/atom/everything/",
+    ).split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    private val maxPerFeed = Config.int("BLOG_MAX_PER_FEED", 20)
+
+    fun poll(): List<ItemEnvelope> = feeds.flatMap { feed ->
+        val host = URI.create(feed).host
+        runCatching { FeedParser.parse(get(http, feed)) }
+            .getOrElse { emptyList() } // one broken feed must not block the others
+            .take(maxPerFeed) // some feeds serve their full archive
+            .map { item ->
+                ItemEnvelope(
+                    source = "blogs",
+                    externalId = "$host:${item.id}",
+                    url = item.link,
+                    title = item.title,
+                    publishedAt = item.published,
+                    rawPayload = buildJsonObject { put("feed", feed) },
+                )
+            }
+    }
+}
+
+/** Fast-rising recent repositories via the GitHub search API. */
+class GhTrendingSource(private val http: HttpClient) {
+    fun poll(): List<ItemEnvelope> {
+        val since = LocalDate.now().minusDays(Config.long("GH_TRENDING_WINDOW_DAYS", 7))
+        val q = URLEncoder.encode("${Config.str("GH_TRENDING_QUERY", "topic:llm")} created:>$since", Charsets.UTF_8)
+        val body = get(
+            http,
+            "https://api.github.com/search/repositories?q=$q&sort=stars&order=desc&per_page=20",
+            "Accept", "application/vnd.github+json",
+        )
+        return Json.parseToJsonElement(body).jsonObject["items"]!!.jsonArray.map { it.jsonObject }.map { repo ->
+            ItemEnvelope(
+                source = "gh-trending",
+                externalId = repo["full_name"]!!.jsonPrimitive.content,
+                url = repo["html_url"]!!.jsonPrimitive.content,
+                title = "${repo["full_name"]!!.jsonPrimitive.content} — ${repo["description"]?.jsonPrimitive?.content ?: "no description"}",
+                publishedAt = repo["created_at"]?.jsonPrimitive?.content ?: Instant.now().toString(),
+                rawPayload = buildJsonObject { put("stars", repo["stargazers_count"]?.jsonPrimitive?.content ?: "0") },
+            )
+        }
+    }
+}
+
+/** Daily top posts from the configured subreddits (public JSON API). */
+class RedditSource(private val http: HttpClient) {
+    private val subreddits = Config.str("REDDIT_SUBREDDITS", "MachineLearning+LocalLLaMA")
+
+    fun poll(): List<ItemEnvelope> {
+        val body = get(http, "https://www.reddit.com/r/$subreddits/top.json?t=day&limit=${Config.int("REDDIT_LIMIT", 25)}")
+        return Json.parseToJsonElement(body).jsonObject["data"]!!.jsonObject["children"]!!.jsonArray
+            .map { it.jsonObject["data"]!!.jsonObject }
+            .map { post ->
+                val permalink = "https://www.reddit.com${post["permalink"]!!.jsonPrimitive.content}"
+                val external = post["url"]?.jsonPrimitive?.content ?: permalink
+                ItemEnvelope(
+                    source = "reddit",
+                    externalId = post["id"]!!.jsonPrimitive.content,
+                    // Self-posts point at the discussion; link posts at the target.
+                    url = if (external.startsWith("https://www.reddit.com")) permalink else external,
+                    title = post["title"]!!.jsonPrimitive.content,
+                    publishedAt = Instant.ofEpochSecond(post["created_utc"]!!.jsonPrimitive.content.toDouble().toLong()).toString(),
+                    rawPayload = subredditPayload(post),
+                )
+            }
+    }
+
+    private fun subredditPayload(post: JsonObject) = buildJsonObject {
+        put("subreddit", post["subreddit"]?.jsonPrimitive?.content ?: "")
+        put("score", post["score"]?.jsonPrimitive?.content ?: "0")
+    }
+}

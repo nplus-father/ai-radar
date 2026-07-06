@@ -39,6 +39,29 @@ object DigestRenderer {
         }
     }
 
+    /**
+     * Weekly rollup v1: the week's highlights re-rendered as one page (pure
+     * aggregation; an LLM-synthesized narrative is a later iteration).
+     */
+    fun renderWeekly(weekStart: LocalDate, isoWeekLabel: String, items: List<DigestedItem>): String {
+        val highlights = items.filter { it.significanceScore >= HEADLINE_MIN_SCORE }
+        return buildString {
+            appendLine("---")
+            appendLine("title: \"AI Radar Weekly — $isoWeekLabel\"")
+            appendLine("date: $weekStart")
+            appendLine("itemCount: ${items.size}")
+            appendLine("highlightCount: ${highlights.size}")
+            appendLine("---")
+            appendLine()
+            highlights.groupBy { it.category }.toSortedMap().forEach { (category, group) ->
+                appendLine("## ${category.replaceFirstChar { it.uppercase() }}")
+                appendLine()
+                group.forEach { appendLine(renderItem(it)) }
+            }
+            if (highlights.isEmpty()) appendLine("No highlights this week (${items.size} items digested).")
+        }
+    }
+
     private fun renderItem(item: DigestedItem): String {
         val tags = runCatching {
             Json.parseToJsonElement(item.tagsJson).jsonArray.joinToString(" ") { "`${it.jsonPrimitive.content}`" }

@@ -14,3 +14,11 @@ application {
 dependencies {
     implementation(project(":common"))
 }
+
+dependencies {
+    testImplementation(libs.kotlin.test)
+}
+
+tasks.test {
+    useJUnitPlatform()
+}

@@ -187,7 +187,10 @@ class ItemRepository(private val ds: DataSource) {
     )
 
     /** Everything digested on the given UTC day, for idempotent page regeneration. */
-    fun digestsForDay(day: LocalDate): List<DigestedItem> = ds.connection.use { c ->
+    fun digestsForDay(day: LocalDate): List<DigestedItem> = digestsForRange(day, day.plusDays(1))
+
+    /** Digests in [fromInclusive, toExclusive), UTC days. */
+    fun digestsForRange(fromInclusive: LocalDate, toExclusive: LocalDate): List<DigestedItem> = ds.connection.use { c ->
         c.prepareStatement(
             """
             SELECT i.id, i.source, i.url, i.title, d.summary_zh, d.summary_en, d.tags, d.significance_score, d.category
@@ -196,8 +199,8 @@ class ItemRepository(private val ds: DataSource) {
             ORDER BY d.significance_score DESC, i.id
             """.trimIndent(),
         ).use { st ->
-            st.setString(1, day.atStartOfDay().atOffset(ZoneOffset.UTC).toString())
-            st.setString(2, day.plusDays(1).atStartOfDay().atOffset(ZoneOffset.UTC).toString())
+            st.setString(1, fromInclusive.atStartOfDay().atOffset(ZoneOffset.UTC).toString())
+            st.setString(2, toExclusive.atStartOfDay().atOffset(ZoneOffset.UTC).toString())
             st.executeQuery().use { rs ->
                 buildList {
                     while (rs.next()) {

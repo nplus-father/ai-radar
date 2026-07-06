@@ -60,5 +60,5 @@ docker compose up -d         # rabbitmq + postgres, migrations via flyway
 | M0        | Skeleton, compose stack, schema, ADRs 001–003                | done  |
 | M1        | First producer (`hn`) through the full pipeline, daily digest | done  |
 | M2        | DLQ replay CLI (`ops`), Prometheus metrics, snapshot exporter, systemd units, runbooks | done (dashboard page lands with the site repo) |
-| M3        | Remaining producers, cross-source dedup, Batch API, weekly rollup | — |
+| M3        | arXiv/GitHub-trending/blogs producers (reddit stub: needs OAuth), per-feed caps, weekly rollup v1 | done (Gemini Batch API deferred) |
 | M4        | SLO doc, runbooks, 30-day live data, tech write-up            | —     |

@@ -28,15 +28,25 @@ fun main() {
     Rabbit.declareTopology(channel)
     val http = HttpClient.newHttpClient()
 
-    val sources: List<Pair<String, () -> List<ItemEnvelope>>> = listOf(
-        "hn" to HnSource(http)::poll,
-        // M3: arxiv, gh-trending, blogs (RSS), reddit
+    data class Source(val name: String, val defaultIntervalMinutes: Int, val poll: () -> List<ItemEnvelope>)
+
+    val all = listOf(
+        Source("hn", 60, HnSource(http)::poll),
+        Source("arxiv", 1440, ArxivSource(http)::poll),
+        Source("gh-trending", 1440, GhTrendingSource(http)::poll),
+        Source("blogs", 240, BlogsSource(http)::poll),
+        // reddit is off by default: the public JSON API now 403s scripted
+        // clients; enabling it requires OAuth support first.
+        Source("reddit", 1440, RedditSource(http)::poll),
     )
+    val enabled = Config.str("SOURCES", "hn,arxiv,gh-trending,blogs").split(',').map { it.trim() }.toSet()
+    val sources = all.filter { it.name in enabled }
+    log.info("enabled sources: {}", sources.joinToString { it.name })
 
     val runOnce = Config.bool("RUN_ONCE", false)
     runBlocking {
-        sources.forEach { (name, poll) ->
-            val interval = Config.int("${name.uppercase()}_INTERVAL_MINUTES", 60)
+        sources.forEach { (name, defaultInterval, poll) ->
+            val interval = Config.int("${name.uppercase().replace('-', '_')}_INTERVAL_MINUTES", defaultInterval)
             launch {
                 while (true) {
                     try {

@@ -1,0 +1,56 @@
+# Local/host stack for ai-radar. Zero-inbound posture (ADR-006): every port
+# binds to 127.0.0.1 only — the pipeline needs egress exclusively, the public
+# face is the statically built site on GitHub Pages.
+name: ai-radar
+
+services:
+  rabbitmq:
+    image: rabbitmq:4-management
+    ports:
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
+      - "127.0.0.1:${RABBITMQ_MGMT_PORT:-15672}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-airadar}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set in .env}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-airadar}
+      POSTGRES_USER: ${POSTGRES_USER:-airadar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airadar} -d ${POSTGRES_DB:-airadar}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  flyway:
+    image: flyway/flyway:11
+    command: migrate
+    environment:
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-airadar}
+      FLYWAY_USER: ${POSTGRES_USER:-airadar}
+      FLYWAY_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    volumes:
+      - ./db/migrations:/flyway/sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  rabbitmq-data:
+  pg-data:

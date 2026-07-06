@@ -11,7 +11,9 @@ dependencies {
     api(libs.kotlinx.coroutines)
     api(libs.kotlinx.serialization.json)
     api(libs.amqp.client)
-    runtimeOnly(libs.logback.classic)
+    api(libs.hikari)
+    api(libs.logback.classic)
+    runtimeOnly(libs.postgresql)
 
     testImplementation(libs.kotlin.test)
 }

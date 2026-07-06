@@ -13,4 +13,5 @@ application {
 
 dependencies {
     implementation(project(":common"))
+    implementation(libs.jsoup)
 }

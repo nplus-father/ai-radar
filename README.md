@@ -57,7 +57,7 @@ docker compose up -d         # rabbitmq + postgres, migrations via flyway
 | Milestone | Scope                                                        | State |
 |-----------|--------------------------------------------------------------|-------|
 | M0        | Skeleton, compose stack, schema, ADRs 001–003                | done  |
-| M1        | First producer (`hn`) through the full pipeline, daily digest | —     |
+| M1        | First producer (`hn`) through the full pipeline, daily digest | done  |
 | M2        | Retry ladder, DLQ + replay CLI, metrics, dashboard v1, budget breaker | — |
 | M3        | Remaining producers, cross-source dedup, Batch API, weekly rollup | — |
 | M4        | SLO doc, runbooks, 30-day live data, tech write-up            | —     |

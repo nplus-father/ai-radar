@@ -2,9 +2,13 @@ package wiki.nplus.airadar.common
 
 /**
  * Single source of truth for broker topology names.
- * The retry tiers implement the TTL + DLX ladder described in ADR-004:
- * retry queues have no consumers; expired messages dead-letter back to the
- * ingest exchange with their original routing key.
+ *
+ * Retry ladder (ADR-004): each work queue gets tiered wait-queues
+ * (`retry.<tier>.<origin>`) that have no consumers, only a message TTL and a
+ * dead-letter policy pointing back at the origin queue via the default
+ * exchange. The attempt count travels in the `x-retry-count` header; when it
+ * exceeds [MAX_RETRIES], or the failure is non-retryable, the message parks in
+ * [DLQ].
  */
 object RabbitTopology {
     const val INGEST_EXCHANGE = "ingest.x"
@@ -14,17 +18,25 @@ object RabbitTopology {
     const val PUBLISH_QUEUE = "publish.q"
     const val DLQ = "dlq.q"
 
+    val WORK_QUEUES = listOf(INGEST_QUEUE, DIGEST_QUEUE, PUBLISH_QUEUE)
+
     const val RETRY_COUNT_HEADER = "x-retry-count"
+    const val ORIGIN_QUEUE_HEADER = "x-origin-queue"
     const val MAX_RETRIES = 3
 
-    /** Retry tier queue name for a given attempt (1-based). */
     val RETRY_TIERS = listOf(
-        RetryTier("retry.30s.q", ttlMillis = 30_000),
-        RetryTier("retry.5m.q", ttlMillis = 300_000),
-        RetryTier("retry.1h.q", ttlMillis = 3_600_000),
+        RetryTier("30s", ttlMillis = 30_000),
+        RetryTier("5m", ttlMillis = 300_000),
+        RetryTier("1h", ttlMillis = 3_600_000),
     )
 
     fun routingKey(source: String): String = "item.$source"
 
-    data class RetryTier(val queue: String, val ttlMillis: Long)
+    /** Wait-queue name for a given origin queue and 1-based attempt. */
+    fun retryQueue(originQueue: String, attempt: Int): String =
+        "retry.${tierFor(attempt).name}.$originQueue"
+
+    fun tierFor(attempt: Int): RetryTier = RETRY_TIERS[(attempt - 1).coerceIn(0, RETRY_TIERS.lastIndex)]
+
+    data class RetryTier(val name: String, val ttlMillis: Long)
 }

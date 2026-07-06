@@ -1,0 +1,54 @@
+package wiki.nplus.airadar.publisher
+
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
+import wiki.nplus.airadar.common.ItemRepository.DigestedItem
+import java.time.LocalDate
+
+object DigestRenderer {
+
+    private const val HEADLINE_MIN_SCORE = 4
+
+    /**
+     * Renders the full daily page from scratch every time — regeneration is
+     * the idempotency strategy (running twice yields byte-identical output).
+     */
+    fun renderDaily(day: LocalDate, items: List<DigestedItem>): String {
+        val (headlines, alsoSeen) = items.partition { it.significanceScore >= HEADLINE_MIN_SCORE }
+        return buildString {
+            appendLine("---")
+            appendLine("title: \"AI Radar — $day\"")
+            appendLine("date: $day")
+            appendLine("itemCount: ${items.size}")
+            appendLine("---")
+            appendLine()
+            if (headlines.isNotEmpty()) {
+                appendLine("## Highlights")
+                appendLine()
+                headlines.forEach { appendLine(renderItem(it)) }
+            }
+            if (alsoSeen.isNotEmpty()) {
+                appendLine("## Also seen")
+                appendLine()
+                alsoSeen.forEach { appendLine("- [${it.title}](${it.url}) — ${it.summaryEn} `${it.source}`") }
+            }
+            if (items.isEmpty()) {
+                appendLine("No items digested today.")
+            }
+        }
+    }
+
+    private fun renderItem(item: DigestedItem): String {
+        val tags = runCatching {
+            Json.parseToJsonElement(item.tagsJson).jsonArray.joinToString(" ") { "`${it.jsonPrimitive.content}`" }
+        }.getOrDefault("")
+        return buildString {
+            appendLine("### [${item.title}](${item.url})")
+            appendLine()
+            appendLine("- ${item.summaryZh}")
+            appendLine("- ${item.summaryEn}")
+            appendLine("- score ${item.significanceScore}/5 · ${item.category} · via ${item.source} $tags")
+        }
+    }
+}

@@ -117,6 +117,24 @@ services:
     restart: unless-stopped
     networks: [default, infra-shared]
 
+  # ---- site auto-publisher --------------------------------------------------
+  # Syncs the publisher's markdown into the sibling ai-radar-site checkout and
+  # pushes it, so GitHub Actions rebuilds the public Astro site
+  # (nplus.wiki/ai-radar-site). Keeps the JRE publisher image git-free.
+  site-publisher:
+    image: alpine/git
+    entrypoint: ["/bin/sh", "/scripts/site-publish.sh"]
+    volumes:
+      - ./out/content:/src:ro
+      - ../ai-radar-site:/repo
+      - ./config/site-publish.sh:/scripts/site-publish.sh:ro
+    environment:
+      SITE_GIT_TOKEN: ${SITE_GIT_TOKEN:?set in .env}
+      SYNC_INTERVAL_SECONDS: "300"
+    depends_on:
+      - publisher
+    restart: unless-stopped
+
 volumes:
   rabbitmq-data:
   pg-data:

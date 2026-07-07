@@ -15,7 +15,7 @@ import wiki.nplus.airadar.common.UrlCanonicalizer
 private val log = LoggerFactory.getLogger("enricher")
 private val json = Json { ignoreUnknownKeys = true }
 
-fun main() {
+fun main() = wiki.nplus.airadar.common.App.main("enricher") {
     val registry = wiki.nplus.airadar.common.Metrics.start("enricher", 9102)
     val repo = ItemRepository(Db.dataSource("enricher"))
     val fetcher = ContentFetcher()

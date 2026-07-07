@@ -66,20 +66,28 @@ class GeminiClient(private val http: HttpClient) : LlmClient {
     }
 
     private fun buildPrompt(source: String, title: String, url: String, text: String?) = """
-        You are the digest step of an AI-news pipeline. Summarize the item below.
-        Respond with ONLY a JSON object, no markdown fences, with exactly these fields:
+        You are the senior editor of a daily AI-and-technology intelligence brief read by
+        busy engineers and founders. You are given ONE candidate item. Write a tight,
+        high-signal digest that says what happened AND why it matters — no filler.
+
+        Respond with ONLY a JSON object (no markdown fences) with exactly these fields:
         {
-          "summary_zh": "2-3 sentence summary in Traditional Chinese",
-          "summary_en": "2-3 sentence summary in English",
-          "tags": ["3-6 short lowercase tags"],
-          "significance_score": 1-5 integer (5 = major industry news, 1 = niche),
+          "summary_zh": "2-4 sentence digest in Traditional Chinese: the substance AND why it matters. Concrete, factual, self-contained.",
+          "summary_en": "2-4 sentence digest in English: the substance AND why it matters. Concrete, factual, self-contained.",
+          "tags": ["3-6 short lowercase topical tags"],
+          "significance_score": integer 1-5 (5 = major, industry-shifting; 4 = notable across the field; 3 = useful to a sub-field; 2 = niche; 1 = trivial). Be a strict grader — reserve 5 for genuinely major news.,
           "category": one of "research" | "product" | "engineering" | "policy" | "other"
         }
+
+        Guidance:
+        - Lead with the substance; do not open with "This article discusses...".
+        - For a research paper, state the concrete result/claim and its practical implication.
+        - Do not invent details. If content is missing, judge conservatively from the title and lower the score.
 
         Source: $source
         Title: $title
         URL: $url
-        ${text?.let { "Content:\n${it.take(8000)}" } ?: "Content: (not available, judge from the title)"}
+        ${text?.let { "Content:\n${it.take(12000)}" } ?: "Content: (not available — judge from the title only, and score conservatively)"}
     """.trimIndent()
 
     internal fun parseResponse(body: String, model: String): DigestResult {

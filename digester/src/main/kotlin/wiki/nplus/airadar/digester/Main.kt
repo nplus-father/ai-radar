@@ -13,11 +13,12 @@ import java.net.http.HttpClient
 
 private val log = LoggerFactory.getLogger("digester")
 
-fun main() {
+fun main() = wiki.nplus.airadar.common.App.main("digester") {
     val registry = wiki.nplus.airadar.common.Metrics.start("digester", 9103)
     val repo = ItemRepository(Db.dataSource("digester"))
     val llm = LlmClient.fromEnv(HttpClient.newHttpClient())
     val dailyBudgetUsd = Config.double("DAILY_LLM_BUDGET_USD", 0.50)
+    val dailyDigestLimit = Config.int("DAILY_DIGEST_LIMIT", 10) // high-value items to digest per UTC day; 0 = unlimited
     val connection = Rabbit.connect("digester")
     val channel = connection.createChannel()
     Rabbit.declareTopology(channel)
@@ -34,9 +35,15 @@ fun main() {
             return@consume
         }
 
-        // Circuit breaker (design doc §3.4): once the daily budget is spent the
-        // backlog waits in the queue — BudgetExhausted re-parks without burning
-        // a retry attempt.
+        // Daily selection cap: digest at most N items/day so the spend goes to a
+        // small set of high-value items. Excess re-parks via the same
+        // BudgetExhausted path and waits for the next UTC day's window.
+        if (dailyDigestLimit > 0 && repo.digestCountToday() >= dailyDigestLimit) {
+            throw BudgetExhausted("daily digest limit $dailyDigestLimit reached")
+        }
+        // Cost circuit breaker (design doc §3.4): once the daily budget is spent
+        // the backlog waits in the queue — BudgetExhausted re-parks without
+        // burning a retry attempt.
         val spent = repo.costSpentToday()
         if (spent >= dailyBudgetUsd) {
             throw BudgetExhausted("spent $%.4f of $%.2f today".format(spent, dailyBudgetUsd))

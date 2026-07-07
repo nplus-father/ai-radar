@@ -21,7 +21,7 @@ private val json = Json { encodeDefaults = true }
  * scheduled poll is the retry. RUN_ONCE=true does a single pass and exits,
  * for verification.
  */
-fun main() {
+fun main() = wiki.nplus.airadar.common.App.main("producers") {
     val registry = wiki.nplus.airadar.common.Metrics.start("producers", 9101)
     val connection = Rabbit.connect("producers")
     val channel = connection.createChannel()

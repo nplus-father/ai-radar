@@ -20,7 +20,7 @@ private val log = LoggerFactory.getLogger("publisher")
  * item. Git commit/push of the site repo (ADR-005) lands with the site repo
  * itself; enable with PUBLISH_GIT=true once CONTENT_DIR is a git checkout.
  */
-fun main() {
+fun main() = wiki.nplus.airadar.common.App.main("publisher") {
     val registry = wiki.nplus.airadar.common.Metrics.start("publisher", 9104)
     val repo = ItemRepository(Db.dataSource("publisher"))
     val contentDir = Path.of(Config.str("CONTENT_DIR", "out/content"))

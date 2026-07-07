@@ -174,6 +174,18 @@ class ItemRepository(private val ds: DataSource) {
         }
     }
 
+    /** Number of items digested so far in the current UTC day — drives the daily digest cap. */
+    fun digestCountToday(): Int = ds.connection.use { c ->
+        c.prepareStatement(
+            "SELECT COUNT(*) FROM llm_usage WHERE purpose = 'DIGEST' AND created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'",
+        ).use { st ->
+            st.executeQuery().use { rs ->
+                rs.next()
+                rs.getInt(1)
+            }
+        }
+    }
+
     data class DigestedItem(
         val itemId: Long,
         val source: String,

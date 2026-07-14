@@ -51,6 +51,11 @@ jobs:
             git pull --ff-only
             docker compose pull producers enricher digester publisher
             docker compose up -d producers enricher digester publisher
+            # site-publisher runs a mounted script (config/site-publish.sh) as a
+            # long-lived process — it reads the script once at start. `up -d` won't
+            # touch it, so a script change would silently keep running the old copy
+            # (caused the 2026-07-12 publishing outage). Restart to reload the script.
+            docker compose restart site-publisher
             docker image prune -f
             echo "ai-radar deploy completed at $(date)"
         env:

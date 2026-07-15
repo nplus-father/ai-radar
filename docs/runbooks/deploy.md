@@ -68,6 +68,25 @@ set -a; source .env; set +a
 ./ops/build/install/ops/bin/ops dlq list
 ```
 
+## Items stranded mid-pipeline
+
+Every stage commits its state transition and only then publishes the message for
+the next queue, so a process that dies in between leaves the row advanced with
+nothing to drive it. Symptom: `items` in `ENRICHED` outnumber the messages across
+`digest.q` + `retry.*.digest.q` (both are on the dashboard snapshot), and the
+count never drains.
+
+```bash
+./ops/build/install/ops/bin/ops redrive           # counts only
+./ops/build/install/ops/bin/ops redrive --apply   # re-queue them
+```
+
+Re-queuing the whole state is safe rather than surgical: nothing in the DB
+distinguishes a stranded item from one legitimately waiting its turn under the
+daily cap, and ADR-003's idempotent consumers mean a duplicate for an
+already-queued item costs one trip round the retry ladder and then no-ops. No
+duplicate LLM spend.
+
 ## Rebuilding a day's digest page
 
 `ops republish <YYYY-MM-DD>` re-emits one of that UTC day's items onto

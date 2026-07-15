@@ -3,6 +3,7 @@ package wiki.nplus.airadar.ops
 import com.rabbitmq.client.GetResponse
 import wiki.nplus.airadar.common.Db
 import wiki.nplus.airadar.common.ItemRepository
+import wiki.nplus.airadar.common.ItemState
 import wiki.nplus.airadar.common.Rabbit
 import wiki.nplus.airadar.common.RabbitTopology
 import wiki.nplus.airadar.common.StageMessage
@@ -17,13 +18,60 @@ import kotlin.system.exitProcess
  *                           retry count reset (a replay is a fresh chance)
  *   dlq purge --confirm     drop everything parked
  *   republish <YYYY-MM-DD>  rebuild a day's digest page from the DB
+ *   redrive [--apply]       re-queue items stranded mid-pipeline
  */
 fun main(args: Array<String>) {
     when (args.firstOrNull()) {
         "dlq" -> dlq(args)
         "republish" -> republish(args)
+        "redrive" -> redrive(args)
         else -> usage()
     }
+}
+
+/**
+ * Re-emits the stage message for every item still sitting in ENRICHED or
+ * DIGESTED, so items whose hand-off was lost get moving again.
+ *
+ * Each stage commits its state transition and only then publishes the message
+ * for the next queue; a process that dies in between leaves the row advanced
+ * with nothing left to drive it, and the redelivered ingest message cannot tell
+ * that state apart from an item legitimately waiting its turn under the daily
+ * cap. Nothing can distinguish them from the DB alone — so this re-queues the
+ * whole state rather than guessing.
+ *
+ * That is safe precisely because of ADR-003: consumers are idempotent, so a
+ * duplicate for an item that was already queued costs one trip round the retry
+ * ladder and then no-ops on a state it has already left. No duplicate LLM spend.
+ */
+private fun redrive(args: Array<String>) {
+    val apply = args.contains("--apply")
+    val repo = ItemRepository(Db.dataSource("ops"))
+    val work = listOf(
+        ItemState.ENRICHED to RabbitTopology.DIGEST_QUEUE,
+        ItemState.DIGESTED to RabbitTopology.PUBLISH_QUEUE,
+    ).map { (state, queue) -> Triple(state, queue, repo.itemIdsInState(state)) }
+
+    work.forEach { (state, queue, ids) -> println("${ids.size} item(s) in $state → $queue") }
+    val total = work.sumOf { it.third.size }
+    if (total == 0) {
+        println("nothing to redrive")
+        return
+    }
+    if (!apply) {
+        println("dry run — pass --apply to re-queue them")
+        return
+    }
+
+    val connection = Rabbit.connect("ops")
+    val channel = connection.createChannel()
+    Rabbit.declareTopology(channel)
+    work.forEach { (state, queue, ids) ->
+        ids.forEach { id -> Rabbit.publish(channel, "", queue, StageMessage(id).encode()) }
+        if (ids.isNotEmpty()) println("re-queued ${ids.size} $state item(s) onto $queue")
+    }
+    channel.close()
+    connection.close()
 }
 
 /**
@@ -118,6 +166,8 @@ private fun usage(): Nothing {
           dlq replay [limit]      move parked messages back to their origin queue
           dlq purge --confirm     drop everything parked
           republish <YYYY-MM-DD>  rebuild that UTC day's digest page from the DB
+          redrive [--apply]       re-queue items stranded in ENRICHED/DIGESTED
+                                  (reports counts only without --apply)
         """.trimIndent(),
     )
     exitProcess(2)

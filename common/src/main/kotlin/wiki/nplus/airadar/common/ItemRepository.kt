@@ -272,6 +272,14 @@ class ItemRepository(private val ds: DataSource) {
         }
     }
 
+    /** Ids of every item sitting in [state], oldest first. Drives `ops redrive`. */
+    fun itemIdsInState(state: ItemState): List<Long> = ds.connection.use { c ->
+        c.prepareStatement("SELECT id FROM items WHERE state = ? ORDER BY id").use { st ->
+            st.setString(1, state.name)
+            st.executeQuery().use { rs -> buildList { while (rs.next()) add(rs.getLong(1)) } }
+        }
+    }
+
     fun stateCounts(): Map<String, Int> = ds.connection.use { c ->
         c.prepareStatement("SELECT state, count(*) FROM items GROUP BY state").use { st ->
             st.executeQuery().use { rs ->

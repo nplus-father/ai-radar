@@ -29,16 +29,6 @@ fun main() = wiki.nplus.airadar.common.App.main("publisher") {
     val channel = connection.createChannel()
     Rabbit.declareTopology(channel)
 
-    val snapshotJob = SnapshotJob(repo, contentDir, java.net.http.HttpClient.newHttpClient())
-    val snapshotMinutes = Config.int("SNAPSHOT_INTERVAL_MINUTES", 60)
-    kotlin.concurrent.thread(isDaemon = true, name = "metrics-snapshot") {
-        while (true) {
-            runCatching { snapshotJob.capture(java.time.Instant.now()) }
-                .onFailure { log.warn("snapshot failed: {}", it.toString()) }
-            Thread.sleep(snapshotMinutes * 60_000L)
-        }
-    }
-
     log.info("publisher: consuming {} → {}", RabbitTopology.PUBLISH_QUEUE, contentDir.toAbsolutePath())
     Rabbit.consume(channel, RabbitTopology.PUBLISH_QUEUE, registry) { body ->
         val itemId = StageMessage.decode(body).itemId
@@ -64,6 +54,24 @@ fun main() = wiki.nplus.airadar.common.App.main("publisher") {
         // git_commit stays null: the sidecar commits, so the hash is not known here.
         repo.recordPublish("DAILY", target.toString(), null, items.size, "SUCCESS")
         log.info("published {} ({} items) + weekly {}", target, items.size, isoWeekLabel)
+    }
+
+    // Snapshots start only once our own consumer is registered — basicConsume is a
+    // synchronous RPC, so by here the broker reports publish.q with consumers=1.
+    // Started before it, the first capture always recorded our own queue as
+    // consumer-less, and at an hourly cadence that false "stalled" reading sat on
+    // the public dashboard for an hour after every deploy. The settle delay covers
+    // the sibling apps, which compose restarts alongside us.
+    val snapshotJob = SnapshotJob(repo, contentDir, java.net.http.HttpClient.newHttpClient())
+    val snapshotMinutes = Config.int("SNAPSHOT_INTERVAL_MINUTES", 60)
+    val settleSeconds = Config.int("SNAPSHOT_SETTLE_SECONDS", 45)
+    kotlin.concurrent.thread(isDaemon = true, name = "metrics-snapshot") {
+        Thread.sleep(settleSeconds * 1000L)
+        while (true) {
+            runCatching { snapshotJob.capture(java.time.Instant.now()) }
+                .onFailure { log.warn("snapshot failed: {}", it.toString()) }
+            Thread.sleep(snapshotMinutes * 60_000L)
+        }
     }
 }
 

@@ -25,9 +25,10 @@ while true; do
     sleep "$INTERVAL"
     continue
   fi
-  mkdir -p /repo/content/daily /repo/content/weekly /repo/public/data/metrics
+  mkdir -p /repo/content/daily /repo/content/weekly /repo/content/essays /repo/public/data/metrics
   cp -r /src/daily/. /repo/content/daily/ 2>/dev/null || true
   cp -r /src/weekly/. /repo/content/weekly/ 2>/dev/null || true
+  cp -r /src/essays/. /repo/content/essays/ 2>/dev/null || true
   # metrics snapshot 走 public/ 而非 content/：content/ 只被 Astro 的 markdown
   # collection glob 掃（*.md），JSON 放進去不會被輸出；public/ 會原樣複製進 dist/，
   # 這樣 dashboard 才 fetch 得到 /data/metrics/latest.json。

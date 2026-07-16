@@ -4,6 +4,7 @@ import wiki.nplus.airadar.common.Config
 import wiki.nplus.airadar.common.DigestResult
 import wiki.nplus.airadar.common.EssayResult
 import wiki.nplus.airadar.common.ItemRepository
+import wiki.nplus.airadar.common.JudgeResult
 import wiki.nplus.airadar.common.SelectResult
 import java.net.http.HttpClient
 
@@ -27,6 +28,13 @@ interface LlmClient {
 
     /** The daily essay: news + library passages → book-informed commentary, or a refusal. */
     fun essay(candidate: ItemRepository.EssayCandidate, chapters: List<ChapterExcerpt>): EssayResult
+
+    /**
+     * The relevance judge: is the retrieved book evidence a genuine frame for
+     * this news, or a keyword coincidence? Runs on the cheap tier — vector
+     * distance cannot make this call (live calibration 2026-07-16), an LLM can.
+     */
+    fun judge(candidate: ItemRepository.EssayCandidate): JudgeResult
 
     fun cost(inputTokens: Int, outputTokens: Int): Double = 0.0
 
@@ -80,6 +88,14 @@ class FakeLlmClient : LlmClient {
 
     override fun select(candidates: List<ItemRepository.SelectionCandidate>, maxPicks: Int): SelectResult = SelectResult(
         picks = candidates.take(maxPicks).map { SelectResult.Pick(it.item.itemId, "（測試理由）${it.item.title}") },
+        model = model,
+        inputTokens = 0,
+        outputTokens = 0,
+    )
+
+    override fun judge(candidate: ItemRepository.EssayCandidate): JudgeResult = JudgeResult(
+        related = true,
+        reason = "（測試判定）",
         model = model,
         inputTokens = 0,
         outputTokens = 0,

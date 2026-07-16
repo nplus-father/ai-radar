@@ -35,6 +35,8 @@ fun main() = wiki.nplus.airadar.common.App.main("digester") {
     val essayist = EssayistJob(
         repo,
         LlmClient.essayistFromEnv(http),
+        // Judge runs on the cheap digest tier — same client config as `llm`.
+        LlmClient.fromEnv(http),
         wiki.nplus.airadar.common.LibraryClient.fromEnv(http),
         connection.createChannel(),
         registry,

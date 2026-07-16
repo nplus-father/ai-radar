@@ -19,12 +19,14 @@ import java.time.ZoneOffset
 
 /**
  * The daily essay (news-echo Phase 2): once per UTC day after ESSAY_HOUR_UTC,
- * take the strongest-resonance uncomposed shortlist pick, pull the full text
- * of its top chapters from the library, and have ESSAY_MODEL write the
- * book-informed commentary. One LLM attempt per day; the model may refuse
- * (skip) when the passages cannot support an essay — days without an essay
- * are a legal outcome (寧缺勿濫), and a skipped pick is consumed so the same
- * dead end is not retried tomorrow.
+ * walk the shortlist pool strongest-resonance-first, and for each pick ask the
+ * cheap-tier relevance judge whether the book evidence genuinely illuminates
+ * the news — at most ESSAY_JUDGE_MAX_CANDIDATES verdicts per day. The first
+ * survivor gets its top chapters pulled in full and ESSAY_MODEL writes the
+ * book-informed commentary (one essay attempt per day); the essay model may
+ * still refuse (skip). Rejected and skipped picks are consumed so the same
+ * dead pairing is not retried tomorrow. Days without an essay are a legal
+ * outcome (寧缺勿濫).
  *
  * Runs in the digester process for the same reason as the curator (ADR-009):
  * one process spends all LLM money.
@@ -32,6 +34,7 @@ import java.time.ZoneOffset
 class EssayistJob(
     private val repo: ItemRepository,
     private val essayist: LlmClient,
+    private val judge: LlmClient,
     private val library: LibraryClient,
     private val channel: Channel,
     private val registry: MeterRegistry,
@@ -40,6 +43,7 @@ class EssayistJob(
     private val essayHourUtc = Config.int("ESSAY_HOUR_UTC", 22)
     private val ttlDays = Config.int("SHORTLIST_TTL_DAYS", 7)
     private val maxChapters = Config.int("ESSAY_MAX_CHAPTERS", 2)
+    private val maxJudged = Config.int("ESSAY_JUDGE_MAX_CANDIDATES", 3)
     private val dailyBudgetUsd = Config.double("DAILY_LLM_BUDGET_USD", 0.50)
     private fun outcome(name: String) = registry.counter("airadar_essay_runs_total", "outcome", name)
 
@@ -49,8 +53,8 @@ class EssayistJob(
         val day = utcNow.toLocalDate()
         if (repo.essayExistsForDay(day)) return
 
-        val candidate = repo.essayCandidates(ttlDays).firstOrNull()
-        if (candidate == null) {
+        val candidates = repo.essayCandidates(ttlDays)
+        if (candidates.isEmpty()) {
             // No pending pick: not an error, the pool refills as news resonates.
             return
         }
@@ -59,6 +63,26 @@ class EssayistJob(
         if (spent >= dailyBudgetUsd) {
             outcome("budget_skipped").increment()
             log.warn("essay {}: skipped, ${"$%.4f".format(spent)} of ${"$%.2f".format(dailyBudgetUsd)} spent", day)
+            return
+        }
+
+        // The relevance judge (cheap tier) runs BEFORE the essay: vector
+        // distance measures library density, not relatedness (2026-07-16 live
+        // calibration), so a keyword coincidence must be caught here — an
+        // essay built on a fake pairing would be published. Judged-unrelated
+        // picks are consumed so the same dead pairing is not retried tomorrow.
+        val candidate = candidates.take(maxJudged).firstOrNull { c ->
+            val verdict = judge.judge(c)
+            repo.recordUsage(c.itemId, "JUDGE", verdict.model, verdict.inputTokens, verdict.outputTokens, judge.cost(verdict.inputTokens, verdict.outputTokens))
+            if (!verdict.related) {
+                repo.markComposed(c.itemId)
+                outcome("judge_rejected").increment()
+                log.info("essay {}: judge rejected item {} ({}): {}", day, c.itemId, c.title, verdict.reason)
+            }
+            verdict.related
+        }
+        if (candidate == null) {
+            log.info("essay {}: no candidate survived the judge — no essay today (寧缺勿濫)", day)
             return
         }
 

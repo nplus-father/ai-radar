@@ -16,6 +16,7 @@ import wiki.nplus.airadar.common.Config
 import wiki.nplus.airadar.common.DigestResult
 import wiki.nplus.airadar.common.EssayResult
 import wiki.nplus.airadar.common.ItemRepository
+import wiki.nplus.airadar.common.JudgeResult
 import wiki.nplus.airadar.common.RetryableFailure
 import wiki.nplus.airadar.common.SelectResult
 import java.net.URI
@@ -45,6 +46,9 @@ class GeminiClient(
 
     override fun essay(candidate: ItemRepository.EssayCandidate, chapters: List<LlmClient.ChapterExcerpt>): EssayResult =
         parseEssay(generate(buildEssayPrompt(candidate, chapters)), model)
+
+    override fun judge(candidate: ItemRepository.EssayCandidate): JudgeResult =
+        parseJudge(generate(buildJudgePrompt(candidate)), model)
 
     private fun generate(prompt: String): String {
         val body = buildJsonObject {
@@ -228,6 +232,41 @@ class GeminiClient(
                     reason = pick.required("reason"),
                 )
             },
+            model = model,
+            inputTokens = inputTokens,
+            outputTokens = outputTokens,
+        )
+    }
+
+    private fun buildJudgePrompt(candidate: ItemRepository.EssayCandidate): String = """
+        你是一個嚴格的把關者。一個系統用向量檢索幫新聞配書，但向量距離常把
+        「關鍵詞撞到」誤認為「真有關聯」。你的任務：判斷下面的書櫃證據是否
+        真的能為這則新聞提供框架——能讓一篇評析說出非顯而易見的東西。
+
+        新聞：
+        - 標題：${candidate.title}
+        ${candidate.extractedText?.let { "- 內文（節錄）：\n${it.take(3000)}" } ?: "- 內文：（無全文）"}
+
+        書櫃檢索到的段落：
+        ${candidate.passagesJson}
+
+        判斷標準：
+        - 真關聯 = 書中的「概念或框架」適用於新聞的「實質內容」，兩者相撞會產生洞見。
+        - 假關聯 = 只是主題詞重疊（同講 AI、同講非洲、同有「洪水」二字），
+          或新聞本身太瑣碎（產品小更新、宣傳稿、清單型內容）撐不起評析。
+        - 有疑慮時判 false。發出一篇硬拗的評析比空手一天糟糕得多。
+
+        只回傳 JSON 物件（不要 markdown fence）：
+        {"related": true 或 false, "reason": "一句話說明（繁體中文）"}
+    """.trimIndent()
+
+    internal fun parseJudge(body: String, model: String): JudgeResult {
+        val (payload, inputTokens, outputTokens) = extractPayload(body)
+        val judge = Json.parseToJsonElement(payload).jsonObject
+        return JudgeResult(
+            related = judge["related"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                ?: error("judge JSON missing related"),
+            reason = judge.required("reason"),
             model = model,
             inputTokens = inputTokens,
             outputTokens = outputTokens,

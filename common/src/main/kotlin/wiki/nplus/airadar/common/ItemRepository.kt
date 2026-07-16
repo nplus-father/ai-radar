@@ -625,6 +625,15 @@ data class SelectResult(
     data class Pick(val itemId: Long, val reason: String)
 }
 
+/** Structured output of the relevance judge, provider-agnostic. */
+data class JudgeResult(
+    val related: Boolean,
+    val reason: String,
+    val model: String,
+    val inputTokens: Int,
+    val outputTokens: Int,
+)
+
 /** Structured output of the LLM essay step (essayist), provider-agnostic. */
 data class EssayResult(
     /** The model may decline: passages that cannot support an essay produce no essay (寧缺勿濫). */

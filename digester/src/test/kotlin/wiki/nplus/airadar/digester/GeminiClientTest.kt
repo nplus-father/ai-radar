@@ -111,6 +111,20 @@ class GeminiClientTest {
     }
 
     @Test
+    fun `parses a judge verdict`() {
+        val body = essayResponse("""{"related": false, "reason": "主題詞重疊而已"}""")
+        val result = client().parseJudge(body, "gemini-test")
+        assertEquals(false, result.related)
+        assertEquals("主題詞重疊而已", result.reason)
+    }
+
+    @Test
+    fun `judge without verdict fails fast`() {
+        val body = essayResponse("""{"reason": "沒有結論"}""")
+        assertFailsWith<IllegalStateException> { client().parseJudge(body, "gemini-test") }
+    }
+
+    @Test
     fun `essay claiming success without body fails fast`() {
         val payload = """{"skip": false, "skip_reason": null, "title_zh": "t", "essay_md": "", "books_used": []}"""
         assertFailsWith<IllegalStateException> { client().parseEssay(essayResponse(payload), "gemini-test") }

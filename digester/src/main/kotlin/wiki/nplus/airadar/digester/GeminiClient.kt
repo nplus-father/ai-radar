@@ -14,6 +14,7 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import wiki.nplus.airadar.common.Config
 import wiki.nplus.airadar.common.DigestResult
+import wiki.nplus.airadar.common.EssayResult
 import wiki.nplus.airadar.common.ItemRepository
 import wiki.nplus.airadar.common.RetryableFailure
 import wiki.nplus.airadar.common.SelectResult
@@ -39,8 +40,11 @@ class GeminiClient(
     override fun digest(source: String, title: String, url: String, text: String?): DigestResult =
         parseResponse(generate(buildDigestPrompt(source, title, url, text)), model)
 
-    override fun select(candidates: List<ItemRepository.DigestedItem>, maxPicks: Int): SelectResult =
+    override fun select(candidates: List<ItemRepository.SelectionCandidate>, maxPicks: Int): SelectResult =
         parseSelection(generate(buildSelectPrompt(candidates, maxPicks)), model)
+
+    override fun essay(candidate: ItemRepository.EssayCandidate, chapters: List<LlmClient.ChapterExcerpt>): EssayResult =
+        parseEssay(generate(buildEssayPrompt(candidate, chapters)), model)
 
     private fun generate(prompt: String): String {
         val body = buildJsonObject {
@@ -105,16 +109,20 @@ class GeminiClient(
         ${text?.let { "Content:\n${it.take(12000)}" } ?: "Content: (not available — judge from the title only, and score conservatively)"}
     """.trimIndent()
 
-    private fun buildSelectPrompt(candidates: List<ItemRepository.DigestedItem>, maxPicks: Int): String {
+    private fun buildSelectPrompt(candidates: List<ItemRepository.SelectionCandidate>, maxPicks: Int): String {
         val list = buildJsonArray {
             candidates.forEach { c ->
                 add(
                     buildJsonObject {
-                        put("id", c.itemId)
-                        put("title", c.title)
-                        put("score", c.significanceScore)
-                        put("category", c.category)
-                        put("summary", c.summaryEn)
+                        put("id", c.item.itemId)
+                        put("title", c.item.title)
+                        put("score", c.item.significanceScore)
+                        put("category", c.item.category)
+                        put("summary", c.item.summaryEn)
+                        // Resonance evidence (ADR-010): how much the bookshelf
+                        // has to say. Smaller distance = stronger.
+                        c.topBookDistance?.let { put("library_distance", it) }
+                        c.booksJson?.let { put("library_books", Json.parseToJsonElement(it)) }
                     },
                 )
             }
@@ -130,6 +138,11 @@ class GeminiClient(
             - Favor items with lasting significance — a shift in how people build, work, or
               govern — over incremental releases and benchmark bumps.
             - Favor items where a book could plausibly add a frame the news itself lacks.
+              Each candidate carries its library retrieval evidence: `library_distance` is
+              the raw cosine distance of the nearest book (smaller = the bookshelf resonates
+              more) and `library_books` the nearest books. Prefer strong resonance, but a
+              conceptually adjacent book beats a keyword-similar one — judge the pairing,
+              not just the number.
             - Be strict: picking fewer, or none, is a perfectly good answer.
 
             Respond with ONLY a JSON object (no markdown fences):
@@ -141,6 +154,49 @@ class GeminiClient(
 
             Candidates:
             $list
+        """.trimIndent()
+    }
+
+    private fun buildEssayPrompt(candidate: ItemRepository.EssayCandidate, chapters: List<LlmClient.ChapterExcerpt>): String {
+        val chapterBlocks = chapters.joinToString("\n\n") { ch ->
+            "### 《${ch.bookTitle}》｜${ch.chapterTitle}（chapter_id: ${ch.chapterId}）\n${ch.content.take(6000)}"
+        }
+        return """
+            你是一個每日評論專欄的作者。你的獨特之處：用「書櫃」回應時事——從自己讀過的書中
+            找出真正能照亮這則新聞的框架，寫一篇有洞見的繁體中文評析。新聞為引、書為體。
+
+            今天的新聞：
+            - 標題：${candidate.title}
+            - 來源：${candidate.source}（${candidate.url}）
+            - 入選理由：${candidate.rationale}
+            ${candidate.extractedText?.let { "- 內文（節錄）：\n${it.take(6000)}" } ?: "- 內文：（無全文，僅標題）"}
+
+            書櫃檢索到的候選段落（帶原始距離，越小越相關）：
+            ${candidate.passagesJson}
+
+            以下章節已取得全文，引用請以此為準：
+
+            $chapterBlocks
+
+            寫作要求：
+            - 最多引用「兩本」書；引文必須真實出自上面的段落或章節全文，不可杜撰。
+            - 說清楚書中框架是什麼、它讓我們看見新聞中哪個「非顯而易見」的層面。
+            - 不要寫成新聞摘要加書摘：評析的價值在於兩者相撞之後你自己的判斷。
+            - 長度約 800-1500 字，Markdown 格式，段落分明；不用列參考書目（系統會加）。
+            - 誠實原則：如果這些段落撐不起一篇評析（只是字面巧合、概念不合），
+              請放棄——skip=true 並說明原因。寧缺勿濫。
+
+            只回傳 JSON 物件（不要 markdown fence）：
+            {
+              "skip": false,
+              "skip_reason": null,
+              "title_zh": "評析標題（繁體中文，不是新聞標題的翻譯）",
+              "essay_md": "評析全文（Markdown）",
+              "books_used": [
+                {"book_id": "…", "book_title": "…", "chapter_id": "…", "chapter_title": "…"}
+              ]
+            }
+            若 skip=true：skip_reason 填原因，其餘欄位可為 null、books_used 為 []。
         """.trimIndent()
     }
 
@@ -172,6 +228,25 @@ class GeminiClient(
                     reason = pick.required("reason"),
                 )
             },
+            model = model,
+            inputTokens = inputTokens,
+            outputTokens = outputTokens,
+        )
+    }
+
+    internal fun parseEssay(body: String, model: String): EssayResult {
+        val (payload, inputTokens, outputTokens) = extractPayload(body)
+        val essay = Json.parseToJsonElement(payload).jsonObject
+        val skip = essay["skip"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+        if (!skip && essay["essay_md"]?.jsonPrimitive?.content.isNullOrBlank()) {
+            error("essay JSON has skip=false but no essay_md")
+        }
+        return EssayResult(
+            skip = skip,
+            skipReason = essay["skip_reason"]?.jsonPrimitive?.takeIf { it.isString }?.content,
+            titleZh = essay["title_zh"]?.jsonPrimitive?.takeIf { it.isString }?.content,
+            essayMd = essay["essay_md"]?.jsonPrimitive?.takeIf { it.isString }?.content,
+            booksJson = essay["books_used"]?.jsonArray?.toString() ?: "[]",
             model = model,
             inputTokens = inputTokens,
             outputTokens = outputTokens,

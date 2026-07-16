@@ -28,7 +28,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Jib builds one image per app module and pushes:
-      #   ghcr.io/nplus-father/ai-radar-{producers,enricher,digester,publisher}
+      #   ghcr.io/nplus-father/ai-radar-{producers,enricher,matcher,digester,publisher}
       - name: Build & push all images with Jib
         run: |
           chmod +x gradlew
@@ -49,8 +49,8 @@ jobs:
             cd ~/workspace/ai-radar
             echo "$GHCR_TOKEN" | docker login ghcr.io -u andrewnplus --password-stdin
             git pull --ff-only
-            docker compose pull producers enricher digester publisher
-            docker compose up -d producers enricher digester publisher
+            docker compose pull producers enricher matcher digester publisher
+            docker compose up -d producers enricher matcher digester publisher
             # site-publisher runs a mounted script (config/site-publish.sh) as a
             # long-lived process — it reads the script once at start. `up -d` won't
             # touch it, so a script change would silently keep running the old copy

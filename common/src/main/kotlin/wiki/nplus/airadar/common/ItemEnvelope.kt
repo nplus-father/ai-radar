@@ -24,8 +24,14 @@ data class ItemEnvelope(
 enum class ItemState {
     RECEIVED,
     ENRICHED,
+
+    /** Passed the resonance gate (ADR-010): the bookshelf has something to say. */
+    MATCHED,
     DIGESTED,
     PUBLISHED,
     DUPLICATE,
     FAILED,
+
+    /** Terminal: nearest book too far — no LLM money is ever spent on it. */
+    NO_RESONANCE,
 }

@@ -93,6 +93,20 @@ services:
     restart: unless-stopped
     networks: [default, infra-shared]
 
+  # Resonance gate (ADR-010): needs library-bridge on infra-shared-network
+  # (the nplus-infra stack). Outbound HTTP only — zero-inbound holds.
+  matcher:
+    image: ${AI_RADAR_MATCHER_IMAGE:-ghcr.io/nplus-father/ai-radar-matcher:latest}
+    container_name: ai-radar-matcher
+    env_file: [.env]
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      flyway: { condition: service_completed_successfully }
+    restart: unless-stopped
+    networks: [default, infra-shared]
+
   digester:
     image: ${AI_RADAR_DIGESTER_IMAGE:-ghcr.io/nplus-father/ai-radar-digester:latest}
     container_name: ai-radar-digester

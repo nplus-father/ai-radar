@@ -35,11 +35,12 @@ fun main() = wiki.nplus.airadar.common.App.main("producers") {
         Source("arxiv", 1440, ArxivSource(http)::poll),
         Source("gh-trending", 1440, GhTrendingSource(http)::poll),
         Source("blogs", 240, BlogsSource(http)::poll),
+        Source("news", 180, NewsSource(http)::poll),
         // reddit is off by default: the public JSON API now 403s scripted
         // clients; enabling it requires OAuth support first.
         Source("reddit", 1440, RedditSource(http)::poll),
     )
-    val enabled = Config.str("SOURCES", "hn,arxiv,gh-trending,blogs").split(',').map { it.trim() }.toSet()
+    val enabled = Config.str("SOURCES", "hn,arxiv,gh-trending,blogs,news").split(',').map { it.trim() }.toSet()
     val sources = all.filter { it.name in enabled }
     log.info("enabled sources: {}", sources.joinToString { it.name })
 

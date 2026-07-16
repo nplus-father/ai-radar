@@ -1,8 +1,8 @@
 # Runbook: host deployment
 
 The whole stack runs under Docker Compose at `~/workspace/ai-radar`: infra
-(RabbitMQ + Postgres + Flyway) plus the four pipeline apps
-(producers/enricher/digester/publisher) as Jib-built images
+(RabbitMQ + Postgres + Flyway) plus the five pipeline apps
+(producers/enricher/matcher/digester/publisher) as Jib-built images
 `ghcr.io/nplus-father/ai-radar-*`. Host ports bind `127.0.0.1` only (ADR-006);
 each app's metrics port is exposed only on the internal Docker network and
 scraped by the shared Prometheus — never published to the host.
@@ -33,16 +33,27 @@ every push to `main`, then deploys over SSH. Manually:
 ```bash
 cd ~/workspace/ai-radar
 git pull
-docker compose pull producers enricher digester publisher
+docker compose pull producers enricher matcher digester publisher
 docker compose up -d
 ```
 
 Schema changes are applied by the flyway compose service on `up`.
 
+### news-echo Phase 2 rollout (one-time, ADR-010)
+
+1. `.env` needs `LIBRARY_SECRET` (same value as the bridge's `BRIDGE_SECRET`
+   in nplus-infra `bridge.env`); `LIBRARY_URL` defaults to
+   `http://library-bridge:7788` on `infra-shared-network`.
+2. The library-bridge image must include the `/search`+`/chapter` routes
+   (book-library-hub commit `37cc39b` or later) — rebuild/redeploy it first.
+3. Items already ENRICHED have messages parked on digest.q; the digester
+   now no-ops them (guard is MATCHED). Run `ops redrive --apply` once after
+   the deploy to re-route them through match.q.
+
 ## Build images locally (no registry)
 
 ```bash
-./gradlew jibDockerBuild   # builds all four images straight into the local Docker daemon
+./gradlew jibDockerBuild   # builds all five images straight into the local Docker daemon
 docker compose up -d
 ```
 
@@ -55,7 +66,7 @@ docker exec ai-radar-rabbitmq rabbitmqctl list_queues name messages consumers
 docker compose exec postgres psql -U airadar -d airadar -c "SELECT state, count(*) FROM items GROUP BY state"
 ```
 
-Monitoring: Prometheus scrapes `ai-radar-{producers,enricher,digester,publisher}:910x`
+Monitoring: Prometheus scrapes `ai-radar-{producers,enricher,matcher,digester,publisher}:910x`
 and `ai-radar-rabbitmq:15692` over `infra-shared-network`; the **AI Radar
 Pipeline** Grafana dashboard shows queue depth, digest rate, LLM cost and DLQ.
 All containers are visible in Portainer.

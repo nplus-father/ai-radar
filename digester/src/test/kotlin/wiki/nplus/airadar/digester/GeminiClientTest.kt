@@ -82,4 +82,37 @@ class GeminiClientTest {
         val body = sampleSelection.replace("picks", "choices")
         assertFailsWith<IllegalStateException> { client().parseSelection(body, "gemini-test") }
     }
+
+    private fun essayResponse(payload: String) = """
+        {
+          "candidates": [{"content": {"parts": [{"text": ${kotlinx.serialization.json.JsonPrimitive(payload)}}]}}],
+          "usageMetadata": {"promptTokenCount": 8000, "candidatesTokenCount": 1200}
+        }
+    """.trimIndent()
+
+    @Test
+    fun `parses a composed essay`() {
+        val payload = """{"skip": false, "skip_reason": null, "title_zh": "評析標題", "essay_md": "# 內文", "books_used": [{"book_id": "b1", "book_title": "書一", "chapter_id": "b1:c1", "chapter_title": "章一"}]}"""
+        val result = client().parseEssay(essayResponse(payload), "gemini-test")
+        assertEquals(false, result.skip)
+        assertEquals("評析標題", result.titleZh)
+        assertEquals("# 內文", result.essayMd)
+        assertEquals(8000, result.inputTokens)
+        assertEquals(1200, result.outputTokens)
+    }
+
+    @Test
+    fun `parses a declined essay`() {
+        val payload = """{"skip": true, "skip_reason": "字面巧合", "title_zh": null, "essay_md": null, "books_used": []}"""
+        val result = client().parseEssay(essayResponse(payload), "gemini-test")
+        assertEquals(true, result.skip)
+        assertEquals("字面巧合", result.skipReason)
+        assertEquals(null, result.essayMd)
+    }
+
+    @Test
+    fun `essay claiming success without body fails fast`() {
+        val payload = """{"skip": false, "skip_reason": null, "title_zh": "t", "essay_md": "", "books_used": []}"""
+        assertFailsWith<IllegalStateException> { client().parseEssay(essayResponse(payload), "gemini-test") }
+    }
 }

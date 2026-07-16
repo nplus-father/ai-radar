@@ -49,8 +49,10 @@ private fun shortlist(args: Array<String>) {
 }
 
 /**
- * Re-emits the stage message for every item still sitting in ENRICHED or
- * DIGESTED, so items whose hand-off was lost get moving again.
+ * Re-emits the stage message for every item still sitting in ENRICHED,
+ * MATCHED or DIGESTED, so items whose hand-off was lost get moving again.
+ * Also the migration path for pre-matcher backlogs: ENRICHED items now route
+ * to match.q (ADR-010), wherever their original message was parked.
  *
  * Each stage commits its state transition and only then publishes the message
  * for the next queue; a process that dies in between leaves the row advanced
@@ -67,7 +69,8 @@ private fun redrive(args: Array<String>) {
     val apply = args.contains("--apply")
     val repo = ItemRepository(Db.dataSource("ops"))
     val work = listOf(
-        ItemState.ENRICHED to RabbitTopology.DIGEST_QUEUE,
+        ItemState.ENRICHED to RabbitTopology.MATCH_QUEUE,
+        ItemState.MATCHED to RabbitTopology.DIGEST_QUEUE,
         ItemState.DIGESTED to RabbitTopology.PUBLISH_QUEUE,
     ).map { (state, queue) -> Triple(state, queue, repo.itemIdsInState(state)) }
 

@@ -7,16 +7,20 @@ import kotlin.test.assertEquals
 
 class CuratorJobTest {
 
-    private fun candidate(id: Long) = ItemRepository.DigestedItem(
-        itemId = id,
-        source = "hn",
-        url = "https://example.com/$id",
-        title = "item $id",
-        summaryZh = "摘要",
-        summaryEn = "summary",
-        tagsJson = "[]",
-        significanceScore = 4,
-        category = "product",
+    private fun candidate(id: Long) = ItemRepository.SelectionCandidate(
+        item = ItemRepository.DigestedItem(
+            itemId = id,
+            source = "hn",
+            url = "https://example.com/$id",
+            title = "item $id",
+            summaryZh = "摘要",
+            summaryEn = "summary",
+            tagsJson = "[]",
+            significanceScore = 4,
+            category = "product",
+        ),
+        topBookDistance = 1.05,
+        booksJson = """[{"book_id":"b1","title_zh":"書一","distance":1.05}]""",
     )
 
     private fun result(vararg ids: Long) = SelectResult(

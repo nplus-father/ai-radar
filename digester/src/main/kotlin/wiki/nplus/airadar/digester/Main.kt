@@ -27,16 +27,25 @@ fun main() = wiki.nplus.airadar.common.App.main("digester") {
     val outputTokens = registry.counter("airadar_llm_tokens_total", "type", "output")
     val cost = registry.counter("airadar_llm_cost_usd_total")
 
-    // Daily selection (ADR-009) runs in THIS process: the budget check below has
-    // no DB-level guard, so a second LLM-spending process would race it. The
-    // curator is a tick loop, not a consumer — its unit of work is "the day's
-    // candidate set", which no per-item queue message can represent.
+    // Daily jobs (ADR-009) run in THIS process: the budget check below has no
+    // DB-level guard, so a second LLM-spending process would race it. Both are
+    // tick loops, not consumers — their unit of work is "the day's candidate
+    // set", which no per-item queue message can represent.
     val curator = CuratorJob(repo, LlmClient.selectorFromEnv(http), registry)
+    val essayist = EssayistJob(
+        repo,
+        LlmClient.essayistFromEnv(http),
+        wiki.nplus.airadar.common.LibraryClient.fromEnv(http),
+        connection.createChannel(),
+        registry,
+    )
     val curatorTickMinutes = Config.int("CURATOR_TICK_MINUTES", 5)
     kotlin.concurrent.thread(isDaemon = true, name = "curator") {
         while (true) {
             runCatching { curator.runIfDue(java.time.Instant.now()) }
                 .onFailure { log.warn("selection attempt failed, next tick retries: {}", it.toString()) }
+            runCatching { essayist.runIfDue(java.time.Instant.now()) }
+                .onFailure { log.warn("essay attempt failed, next tick retries: {}", it.toString()) }
             Thread.sleep(curatorTickMinutes * 60_000L)
         }
     }
@@ -45,8 +54,11 @@ fun main() = wiki.nplus.airadar.common.App.main("digester") {
     Rabbit.consume(channel, RabbitTopology.DIGEST_QUEUE, registry) { body ->
         val itemId = StageMessage.decode(body).itemId
         val item = repo.findItem(itemId) ?: error("item $itemId not found")
-        if (item.state != ItemState.ENRICHED.name) {
-            log.info("item {} already in state {}, redelivery no-op", itemId, item.state)
+        // Items now arrive through the resonance gate (ADR-010): matcher owns
+        // ENRICHED → MATCHED. An ENRICHED item on this queue is pre-gate
+        // backlog from before the matcher existed — `ops redrive` re-routes it.
+        if (item.state != ItemState.MATCHED.name) {
+            log.info("item {} in state {}, not MATCHED — no-op", itemId, item.state)
             return@consume
         }
 
@@ -71,7 +83,7 @@ fun main() = wiki.nplus.airadar.common.App.main("digester") {
         inputTokens.increment(digest.inputTokens.toDouble())
         outputTokens.increment(digest.outputTokens.toDouble())
         cost.increment(usd)
-        if (repo.transition(itemId, ItemState.ENRICHED, ItemState.DIGESTED)) {
+        if (repo.transition(itemId, ItemState.MATCHED, ItemState.DIGESTED)) {
             Rabbit.publish(channel, "", RabbitTopology.PUBLISH_QUEUE, StageMessage(itemId).encode())
             log.info("digested item {} (score {}): {}", itemId, digest.significanceScore, item.title)
         }

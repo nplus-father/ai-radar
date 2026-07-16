@@ -80,10 +80,10 @@ class CuratorJob(
         /** Drop hallucinated ids and clamp to the cap — the model's list is a suggestion, not a command. */
         fun validatePicks(
             result: SelectResult,
-            candidates: List<ItemRepository.DigestedItem>,
+            candidates: List<ItemRepository.SelectionCandidate>,
             maxPicks: Int,
         ): List<SelectResult.Pick> {
-            val known = candidates.mapTo(HashSet()) { it.itemId }
+            val known = candidates.mapTo(HashSet()) { it.item.itemId }
             return result.picks.filter { it.itemId in known }.distinctBy { it.itemId }.take(maxPicks)
         }
     }

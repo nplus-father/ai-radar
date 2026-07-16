@@ -59,6 +59,7 @@ class SnapshotJob(private val repo: ItemRepository, private val contentDir: Path
                 put("dailyBudgetUsd", Config.double("DAILY_LLM_BUDGET_USD", 0.50))
                 put("dailyDigestLimit", Config.int("DAILY_DIGEST_LIMIT", 10))
                 put("shortlistMaxPerDay", Config.int("SHORTLIST_MAX_PER_DAY", 3))
+                put("matchNoResonanceDistance", Config.double("MATCH_NO_RESONANCE_DISTANCE", 1.10))
             }
             // The selection funnel's live pool (ADR-009): picks awaiting a
             // composition, within TTL.

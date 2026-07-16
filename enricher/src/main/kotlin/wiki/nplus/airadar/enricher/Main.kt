@@ -32,7 +32,8 @@ fun main() = wiki.nplus.airadar.common.App.main("enricher") {
         val fetched = fetcher.fetch(envelope.url)
         repo.saveContent(itemId, fetched.level, fetched.text)
         if (repo.transition(itemId, ItemState.RECEIVED, ItemState.ENRICHED)) {
-            Rabbit.publish(channel, "", RabbitTopology.DIGEST_QUEUE, StageMessage(itemId).encode())
+            // Next stop is the resonance gate (ADR-010), not the digester.
+            Rabbit.publish(channel, "", RabbitTopology.MATCH_QUEUE, StageMessage(itemId).encode())
             log.info("enriched item {} ({}): {}", itemId, fetched.level, envelope.title)
         }
     }

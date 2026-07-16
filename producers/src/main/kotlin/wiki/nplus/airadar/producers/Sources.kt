@@ -74,6 +74,41 @@ class BlogsSource(private val http: HttpClient) {
     }
 }
 
+/**
+ * General news feeds (news-echo Phase 2): English sources, spike-tested
+ * (docs in book-library-hub). Same mechanics as [BlogsSource]; a separate
+ * source so cadence, caps and routing keys stay independently tunable.
+ */
+class NewsSource(private val http: HttpClient) {
+    private val feeds = Config.str(
+        "NEWS_FEEDS",
+        "https://feeds.bbci.co.uk/news/rss.xml," +
+            "https://feeds.bbci.co.uk/news/business/rss.xml," +
+            "https://feeds.bbci.co.uk/news/technology/rss.xml," +
+            "https://www.theguardian.com/world/rss," +
+            "https://www.theguardian.com/culture/rss",
+    ).split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    private val maxPerFeed = Config.int("NEWS_MAX_PER_FEED", 15)
+
+    fun poll(): List<ItemEnvelope> = feeds.flatMap { feed ->
+        val host = URI.create(feed).host
+        runCatching { FeedParser.parse(get(http, feed)) }
+            .getOrElse { emptyList() }
+            .take(maxPerFeed)
+            .map { item ->
+                ItemEnvelope(
+                    source = "news",
+                    externalId = "$host:${item.id}",
+                    url = item.link,
+                    title = item.title,
+                    publishedAt = item.published,
+                    rawPayload = buildJsonObject { put("feed", feed) },
+                )
+            }
+    }
+}
+
 /** Fast-rising recent repositories via the GitHub search API. */
 class GhTrendingSource(private val http: HttpClient) {
     fun poll(): List<ItemEnvelope> {

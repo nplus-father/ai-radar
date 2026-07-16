@@ -296,6 +296,152 @@ class ItemRepository(private val ds: DataSource) {
         }
     }
 
+    fun saveMatch(itemId: Long, topBookDistance: Double, booksJson: String, passagesJson: String) {
+        ds.connection.use { c ->
+            c.prepareStatement(
+                """
+                INSERT INTO matches (item_id, top_book_distance, books, passages)
+                VALUES (?, ?, ?::jsonb, ?::jsonb)
+                ON CONFLICT (item_id) DO NOTHING
+                """.trimIndent(),
+            ).use { st ->
+                st.setLong(1, itemId)
+                st.setDouble(2, topBookDistance)
+                st.setString(3, booksJson)
+                st.setString(4, passagesJson)
+                st.executeUpdate()
+            }
+        }
+    }
+
+    data class MatchRow(val topBookDistance: Double, val booksJson: String, val passagesJson: String)
+
+    fun matchFor(itemId: Long): MatchRow? = ds.connection.use { c ->
+        c.prepareStatement("SELECT top_book_distance, books, passages FROM matches WHERE item_id = ?").use { st ->
+            st.setLong(1, itemId)
+            st.executeQuery().use { rs ->
+                if (rs.next()) MatchRow(rs.getDouble(1), rs.getString(2), rs.getString(3)) else null
+            }
+        }
+    }
+
+    fun essayExistsForDay(day: LocalDate): Boolean = ds.connection.use { c ->
+        c.prepareStatement("SELECT 1 FROM essays WHERE day = ?::date").use { st ->
+            st.setString(1, day.toString())
+            st.executeQuery().use { it.next() }
+        }
+    }
+
+    fun saveEssay(day: LocalDate, itemId: Long, title: String, essayMd: String, booksJson: String, model: String) {
+        ds.connection.use { c ->
+            c.prepareStatement(
+                """
+                INSERT INTO essays (day, item_id, title, essay_md, books, model)
+                VALUES (?::date, ?, ?, ?, ?::jsonb, ?)
+                ON CONFLICT (day) DO NOTHING
+                """.trimIndent(),
+            ).use { st ->
+                st.setString(1, day.toString())
+                st.setLong(2, itemId)
+                st.setString(3, title)
+                st.setString(4, essayMd)
+                st.setString(5, booksJson)
+                st.setString(6, model)
+                st.executeUpdate()
+            }
+        }
+    }
+
+    data class EssayRow(
+        val day: LocalDate,
+        val itemId: Long,
+        val title: String,
+        val essayMd: String,
+        val booksJson: String,
+        val model: String,
+    )
+
+    /** The most recent essay for this item — how the publisher resolves an "essay" message. */
+    fun essayByItem(itemId: Long): EssayRow? = ds.connection.use { c ->
+        c.prepareStatement(
+            "SELECT day, item_id, title, essay_md, books, model FROM essays WHERE item_id = ? ORDER BY day DESC LIMIT 1",
+        ).use { st ->
+            st.setLong(1, itemId)
+            st.executeQuery().use { rs ->
+                if (rs.next()) {
+                    EssayRow(
+                        day = LocalDate.parse(rs.getString(1)),
+                        itemId = rs.getLong(2),
+                        title = rs.getString(3),
+                        essayMd = rs.getString(4),
+                        booksJson = rs.getString(5),
+                        model = rs.getString(6),
+                    )
+                } else {
+                    null
+                }
+            }
+        }
+    }
+
+    data class EssayCandidate(
+        val itemId: Long,
+        val source: String,
+        val url: String,
+        val title: String,
+        val extractedText: String?,
+        val rationale: String,
+        val topBookDistance: Double,
+        val passagesJson: String,
+    )
+
+    /**
+     * The essayist's menu: uncomposed shortlist picks within TTL that have
+     * match evidence, strongest resonance first, freshest as tie-break.
+     */
+    fun essayCandidates(ttlDays: Int): List<EssayCandidate> = ds.connection.use { c ->
+        c.prepareStatement(
+            """
+            SELECT i.id, i.source, i.url, i.title, ic.extracted_text, s.rationale, m.top_book_distance, m.passages
+            FROM shortlist s
+            JOIN items i ON i.id = s.item_id
+            JOIN matches m ON m.item_id = s.item_id
+            LEFT JOIN item_contents ic ON ic.item_id = s.item_id
+            WHERE s.composed_at IS NULL AND s.shortlisted_at > now() - make_interval(days => ?)
+            ORDER BY m.top_book_distance ASC, s.shortlisted_at DESC
+            """.trimIndent(),
+        ).use { st ->
+            st.setInt(1, ttlDays)
+            st.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(
+                            EssayCandidate(
+                                itemId = rs.getLong(1),
+                                source = rs.getString(2),
+                                url = rs.getString(3),
+                                title = rs.getString(4),
+                                extractedText = rs.getString(5),
+                                rationale = rs.getString(6),
+                                topBookDistance = rs.getDouble(7),
+                                passagesJson = rs.getString(8),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun markComposed(itemId: Long) {
+        ds.connection.use { c ->
+            c.prepareStatement("UPDATE shortlist SET composed_at = now() WHERE item_id = ? AND composed_at IS NULL").use { st ->
+                st.setLong(1, itemId)
+                st.executeUpdate()
+            }
+        }
+    }
+
     /** True once the curator has run for the given UTC day — its idempotency key. */
     fun selectionRunExists(day: LocalDate): Boolean = ds.connection.use { c ->
         c.prepareStatement("SELECT 1 FROM selection_runs WHERE day = ?::date").use { st ->
@@ -332,25 +478,42 @@ class ItemRepository(private val ds: DataSource) {
         }
     }
 
+    data class SelectionCandidate(
+        val item: DigestedItem,
+        /** Resonance signal from the matcher (ADR-010); null for pre-gate items. */
+        val topBookDistance: Double?,
+        val booksJson: String?,
+    )
+
     /**
      * Digests produced after [since] that scored at least [minScore] and are
-     * not yet shortlisted — the curator's candidate set. Ordered like the daily
-     * page so the LLM sees the strongest items first.
+     * not yet shortlisted — the curator's candidate set, with each item's
+     * resonance evidence attached. Ordered like the daily page so the LLM sees
+     * the strongest items first.
      */
-    fun selectionCandidates(since: OffsetDateTime, minScore: Int): List<DigestedItem> = ds.connection.use { c ->
+    fun selectionCandidates(since: OffsetDateTime, minScore: Int): List<SelectionCandidate> = ds.connection.use { c ->
         c.prepareStatement(
             """
-            SELECT i.id, i.source, i.url, i.title, d.summary_zh, d.summary_en, d.tags, d.significance_score, d.category
+            SELECT i.id, i.source, i.url, i.title, d.summary_zh, d.summary_en, d.tags, d.significance_score, d.category,
+                   m.top_book_distance, m.books
             FROM digests d
             JOIN items i ON i.id = d.item_id
             LEFT JOIN shortlist s ON s.item_id = d.item_id
+            LEFT JOIN matches m ON m.item_id = d.item_id
             WHERE d.created_at > ? AND d.significance_score >= ? AND s.item_id IS NULL
             ORDER BY d.significance_score DESC, i.id
             """.trimIndent(),
         ).use { st ->
             st.setObject(1, since)
             st.setInt(2, minScore)
-            st.executeQuery().use { rs -> buildList { while (rs.next()) add(rs.toDigestedItem()) } }
+            st.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        val distance = rs.getDouble(10).let { if (rs.wasNull()) null else it }
+                        add(SelectionCandidate(rs.toDigestedItem(), distance, rs.getString(11)))
+                    }
+                }
+            }
         }
     }
 
@@ -461,6 +624,19 @@ data class SelectResult(
 ) {
     data class Pick(val itemId: Long, val reason: String)
 }
+
+/** Structured output of the LLM essay step (essayist), provider-agnostic. */
+data class EssayResult(
+    /** The model may decline: passages that cannot support an essay produce no essay (寧缺勿濫). */
+    val skip: Boolean,
+    val skipReason: String?,
+    val titleZh: String?,
+    val essayMd: String?,
+    val booksJson: String,
+    val model: String,
+    val inputTokens: Int,
+    val outputTokens: Int,
+)
 
 /** Structured output of the LLM digest step, provider-agnostic. */
 data class DigestResult(

@@ -32,6 +32,14 @@ RabbitMQ 4.x ── ingest.q ─▶ enricher ── digest.q ─▶ digester ─
 State machine per item: `RECEIVED → ENRICHED → DIGESTED → PUBLISHED`
 (terminal: `DUPLICATE`, `FAILED`). All transitions are idempotent (ADR-003).
 
+A second judgment tier sits on top (M5, ADR-009): once per UTC day the
+digester's **curator** re-ranks the day's digests relative to each other with a
+stronger model (`SELECT_MODEL`) and keeps at most `SHORTLIST_MAX_PER_DAY` in
+the `shortlist` pool — the input for the daily book-informed commentary (M6).
+The pool is a Postgres table orthogonal to the state machine above; selection
+is a DB batch job, not a queue stage, because its unit of work is the day's
+whole candidate set.
+
 Zero-inbound posture: the host only makes outbound calls (source APIs, LLM,
 git push). Every compose port binds to `127.0.0.1`. The public face is a
 statically built site.
@@ -43,9 +51,9 @@ statically built site.
 | `common`     | Wire contract (`ItemEnvelope`), broker topology, URL canonicalizer |
 | `producers`  | Source pollers on independent cadences (coroutine scheduler)       |
 | `enricher`   | Dedup (two layers) + full-text fetch                               |
-| `digester`   | LLM digestion (daily cap), cost circuit breaker                    |
+| `digester`   | LLM digestion (daily cap), cost circuit breaker, daily curator → shortlist (ADR-009) |
 | `publisher`  | Renders digests + metrics snapshots into `CONTENT_DIR`             |
-| `ops`        | CLI: `dlq list / replay / purge`, `republish <day>` (see runbooks)  |
+| `ops`        | CLI: `dlq list / replay / purge`, `republish <day>`, `redrive`, `shortlist` |
 
 Delivery to the site repo is the `site-publisher` compose sidecar (`alpine/git`
 running [`config/site-publish.sh`](config/site-publish.sh)), not the publisher:
@@ -71,3 +79,6 @@ docker compose up -d         # rabbitmq + postgres, migrations via flyway
 | M2        | DLQ replay CLI (`ops`), Prometheus metrics, snapshot exporter, systemd units, runbooks, dashboard page | done  |
 | M3        | arXiv/GitHub-trending/blogs producers (reddit stub: needs OAuth), per-feed caps, weekly rollup v1 | done (Gemini Batch API deferred) |
 | M4        | SLO doc, runbooks, 30-day live data, tech write-up            | —     |
+| M5        | Selection tier: daily curator, shortlist pool, per-tier model config (ADR-009) | done  |
+| M6        | Book matching via library-bridge `/search` + daily insight composition | —     |
+| M7        | LINE push notifier + dual-channel rendering from one composed artifact | —     |

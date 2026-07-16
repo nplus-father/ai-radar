@@ -19,14 +19,33 @@ import kotlin.system.exitProcess
  *   dlq purge --confirm     drop everything parked
  *   republish <YYYY-MM-DD>  rebuild a day's digest page from the DB
  *   redrive [--apply]       re-queue items stranded mid-pipeline
+ *   shortlist [ttl_days]    list picks awaiting composition (ADR-009)
  */
 fun main(args: Array<String>) {
     when (args.firstOrNull()) {
         "dlq" -> dlq(args)
         "republish" -> republish(args)
         "redrive" -> redrive(args)
+        "shortlist" -> shortlist(args)
         else -> usage()
     }
+}
+
+/** Read-only view of the live selection pool (ADR-009). */
+private fun shortlist(args: Array<String>) {
+    val ttlDays = args.getOrNull(1)?.toIntOrNull() ?: 7
+    val repo = ItemRepository(Db.dataSource("ops"))
+    val pending = repo.shortlistPending(ttlDays)
+    if (pending.isEmpty()) {
+        println("shortlist pool is empty (uncomposed picks from the last $ttlDays day(s))")
+        return
+    }
+    pending.forEach { row ->
+        println("#${row.itemId}  ${row.shortlistedAt.toLocalDate()}  ${row.title}")
+        println("    ${row.url}")
+        println("    ${row.rationale}")
+    }
+    println("${pending.size} pick(s) pending composition (TTL $ttlDays day(s))")
 }
 
 /**
@@ -168,6 +187,7 @@ private fun usage(): Nothing {
           republish <YYYY-MM-DD>  rebuild that UTC day's digest page from the DB
           redrive [--apply]       re-queue items stranded in ENRICHED/DIGESTED
                                   (reports counts only without --apply)
+          shortlist [ttl_days]    list picks awaiting composition (default TTL 7)
         """.trimIndent(),
     )
     exitProcess(2)

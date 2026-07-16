@@ -234,25 +234,7 @@ class ItemRepository(private val ds: DataSource) {
         ).use { st ->
             st.setString(1, fromInclusive.atStartOfDay().atOffset(ZoneOffset.UTC).toString())
             st.setString(2, toExclusive.atStartOfDay().atOffset(ZoneOffset.UTC).toString())
-            st.executeQuery().use { rs ->
-                buildList {
-                    while (rs.next()) {
-                        add(
-                            DigestedItem(
-                                itemId = rs.getLong(1),
-                                source = rs.getString(2),
-                                url = rs.getString(3),
-                                title = rs.getString(4),
-                                summaryZh = rs.getString(5),
-                                summaryEn = rs.getString(6),
-                                tagsJson = rs.getString(7),
-                                significanceScore = rs.getInt(8),
-                                category = rs.getString(9),
-                            ),
-                        )
-                    }
-                }
-            }
+            st.executeQuery().use { rs -> buildList { while (rs.next()) add(rs.toDigestedItem()) } }
         }
     }
 
@@ -314,6 +296,114 @@ class ItemRepository(private val ds: DataSource) {
         }
     }
 
+    /** True once the curator has run for the given UTC day — its idempotency key. */
+    fun selectionRunExists(day: LocalDate): Boolean = ds.connection.use { c ->
+        c.prepareStatement("SELECT 1 FROM selection_runs WHERE day = ?::date").use { st ->
+            st.setString(1, day.toString())
+            st.executeQuery().use { it.next() }
+        }
+    }
+
+    /** Low-water mark for the candidate window; null before the first run ever. */
+    fun lastSelectionRunAt(): OffsetDateTime? = ds.connection.use { c ->
+        c.prepareStatement("SELECT MAX(created_at) FROM selection_runs").use { st ->
+            st.executeQuery().use { rs ->
+                rs.next()
+                rs.getObject(1, OffsetDateTime::class.java)
+            }
+        }
+    }
+
+    fun recordSelectionRun(day: LocalDate, model: String, candidateCount: Int, pickedCount: Int) {
+        ds.connection.use { c ->
+            c.prepareStatement(
+                """
+                INSERT INTO selection_runs (day, model, candidate_count, picked_count)
+                VALUES (?::date, ?, ?, ?)
+                ON CONFLICT (day) DO NOTHING
+                """.trimIndent(),
+            ).use { st ->
+                st.setString(1, day.toString())
+                st.setString(2, model)
+                st.setInt(3, candidateCount)
+                st.setInt(4, pickedCount)
+                st.executeUpdate()
+            }
+        }
+    }
+
+    /**
+     * Digests produced after [since] that scored at least [minScore] and are
+     * not yet shortlisted — the curator's candidate set. Ordered like the daily
+     * page so the LLM sees the strongest items first.
+     */
+    fun selectionCandidates(since: OffsetDateTime, minScore: Int): List<DigestedItem> = ds.connection.use { c ->
+        c.prepareStatement(
+            """
+            SELECT i.id, i.source, i.url, i.title, d.summary_zh, d.summary_en, d.tags, d.significance_score, d.category
+            FROM digests d
+            JOIN items i ON i.id = d.item_id
+            LEFT JOIN shortlist s ON s.item_id = d.item_id
+            WHERE d.created_at > ? AND d.significance_score >= ? AND s.item_id IS NULL
+            ORDER BY d.significance_score DESC, i.id
+            """.trimIndent(),
+        ).use { st ->
+            st.setObject(1, since)
+            st.setInt(2, minScore)
+            st.executeQuery().use { rs -> buildList { while (rs.next()) add(rs.toDigestedItem()) } }
+        }
+    }
+
+    fun saveShortlistPick(itemId: Long, rationale: String, model: String) {
+        ds.connection.use { c ->
+            c.prepareStatement(
+                "INSERT INTO shortlist (item_id, rationale, model) VALUES (?, ?, ?) ON CONFLICT (item_id) DO NOTHING",
+            ).use { st ->
+                st.setLong(1, itemId)
+                st.setString(2, rationale)
+                st.setString(3, model)
+                st.executeUpdate()
+            }
+        }
+    }
+
+    data class ShortlistRow(
+        val itemId: Long,
+        val title: String,
+        val url: String,
+        val rationale: String,
+        val shortlistedAt: OffsetDateTime,
+    )
+
+    /** Picks not yet consumed by a composition and younger than [ttlDays] — the live pool. */
+    fun shortlistPending(ttlDays: Int): List<ShortlistRow> = ds.connection.use { c ->
+        c.prepareStatement(
+            """
+            SELECT s.item_id, i.title, i.url, s.rationale, s.shortlisted_at
+            FROM shortlist s JOIN items i ON i.id = s.item_id
+            WHERE s.composed_at IS NULL AND s.shortlisted_at > now() - make_interval(days => ?)
+            ORDER BY s.shortlisted_at DESC
+            """.trimIndent(),
+        ).use { st ->
+            st.setInt(1, ttlDays)
+            st.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(
+                            ShortlistRow(
+                                itemId = rs.getLong(1),
+                                title = rs.getString(2),
+                                url = rs.getString(3),
+                                rationale = rs.getString(4),
+                                shortlistedAt = rs.getObject(5, OffsetDateTime::class.java),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     fun saveSnapshot(snapshotJson: String) {
         ds.connection.use { c ->
             c.prepareStatement("INSERT INTO metrics_snapshots (snapshot) VALUES (?::jsonb)").use { st ->
@@ -338,6 +428,18 @@ class ItemRepository(private val ds: DataSource) {
         }
     }
 
+    private fun ResultSet.toDigestedItem() = DigestedItem(
+        itemId = getLong(1),
+        source = getString(2),
+        url = getString(3),
+        title = getString(4),
+        summaryZh = getString(5),
+        summaryEn = getString(6),
+        tagsJson = getString(7),
+        significanceScore = getInt(8),
+        category = getString(9),
+    )
+
     private fun ResultSet.toItemRow() = ItemRow(
         id = getLong(1),
         source = getString(2),
@@ -348,6 +450,16 @@ class ItemRepository(private val ds: DataSource) {
         extractedText = getString(7),
         digestedAt = getObject(8, OffsetDateTime::class.java),
     )
+}
+
+/** Structured output of the LLM selection step (curator), provider-agnostic. */
+data class SelectResult(
+    val picks: List<Pick>,
+    val model: String,
+    val inputTokens: Int,
+    val outputTokens: Int,
+) {
+    data class Pick(val itemId: Long, val reason: String)
 }
 
 /** Structured output of the LLM digest step, provider-agnostic. */

@@ -16,7 +16,8 @@ private val log = LoggerFactory.getLogger("digester")
 fun main() = wiki.nplus.airadar.common.App.main("digester") {
     val registry = wiki.nplus.airadar.common.Metrics.start("digester", 9103)
     val repo = ItemRepository(Db.dataSource("digester"))
-    val llm = LlmClient.fromEnv(HttpClient.newHttpClient())
+    val http = HttpClient.newHttpClient()
+    val llm = LlmClient.fromEnv(http)
     val dailyBudgetUsd = Config.double("DAILY_LLM_BUDGET_USD", 0.50)
     val dailyDigestLimit = Config.int("DAILY_DIGEST_LIMIT", 10) // high-value items to digest per UTC day; 0 = unlimited
     val connection = Rabbit.connect("digester")
@@ -25,6 +26,20 @@ fun main() = wiki.nplus.airadar.common.App.main("digester") {
     val inputTokens = registry.counter("airadar_llm_tokens_total", "type", "input")
     val outputTokens = registry.counter("airadar_llm_tokens_total", "type", "output")
     val cost = registry.counter("airadar_llm_cost_usd_total")
+
+    // Daily selection (ADR-009) runs in THIS process: the budget check below has
+    // no DB-level guard, so a second LLM-spending process would race it. The
+    // curator is a tick loop, not a consumer — its unit of work is "the day's
+    // candidate set", which no per-item queue message can represent.
+    val curator = CuratorJob(repo, LlmClient.selectorFromEnv(http), registry)
+    val curatorTickMinutes = Config.int("CURATOR_TICK_MINUTES", 5)
+    kotlin.concurrent.thread(isDaemon = true, name = "curator") {
+        while (true) {
+            runCatching { curator.runIfDue(java.time.Instant.now()) }
+                .onFailure { log.warn("selection attempt failed, next tick retries: {}", it.toString()) }
+            Thread.sleep(curatorTickMinutes * 60_000L)
+        }
+    }
 
     log.info("digester: consuming {} (provider={}, model={}, budget USD {}/day)", RabbitTopology.DIGEST_QUEUE, llm.javaClass.simpleName, llm.model, dailyBudgetUsd)
     Rabbit.consume(channel, RabbitTopology.DIGEST_QUEUE, registry) { body ->

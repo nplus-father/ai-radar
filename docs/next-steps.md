@@ -37,23 +37,28 @@ build `book_theme_vectors` in book-library-hub and score vs the 0.20 baseline.
 ## P1 — Finish the bookshelf-echo rename cutover
 
 GitHub repos already renamed: `ai-radar → bookshelf-echo`,
-`ai-radar-site → bookshelf-echo-site`. Remaining (full runbook:
-`docs/runbooks/rename-cutover.md`):
+`ai-radar-site → bookshelf-echo-site`. Chosen approach: **full runtime
+migration, done manually** (not a plain `git merge`). Full runbook:
+`docs/runbooks/rename-cutover.md`.
 
-- [ ] Merge the three `rename/bookshelf-echo` branches (ai-radar,
-      ai-radar-site, Andrewnplus/nplus-infra).
-- [ ] Let CI rebuild `ghcr.io/nplus-father/bookshelf-echo-*` images.
-- [ ] Deploy host: rename `~/workspace/{ai-radar,ai-radar-site}` dirs, update
-      remotes, `docker compose down && up -d` (container/image names changed).
-- [ ] Prometheus reload + update Grafana panels (`app="ai-radar"` →
-      `"bookshelf-echo"`; metrics history keeps the old label — expected).
+- [x] **Site** — `rename/bookshelf-echo` merged to `main` and pushed
+      (2026-07-17). GitHub Actions rebuilds Pages at `/bookshelf-echo-site/`.
+- [ ] **Pipeline** — do NOT just merge to main: the branch changes the compose
+      project name, so a plain deploy would create empty `bookshelf-echo_*`
+      volumes and **wipe the Postgres DB + queue**. Must be a hand-run cutover
+      on the deploy host with **volume migration** (`ai-radar_{pg,rabbitmq}-data
+      → bookshelf-echo_*`, verify row counts, then merge + `docker compose up`).
+      See runbook §5.
+- [ ] Merge `Andrewnplus/nplus-infra` (prometheus targets) in lockstep with the
+      pipeline container rename; reload Prometheus + fix Grafana `app=` label.
 - [ ] nplus-backend LINE job: set env `AI_RADAR_DAILY_URL` /
       `AI_RADAR_ESSAY_URL` → `.../bookshelf-echo-site/...` (no code change).
 - [ ] Optional later: rebrand the LINE card "📡 AI Radar" heading once that
       repo's WIP settles. Old `nplus.wiki/ai-radar-site/...` links will 404.
 
 Deliberately NOT renamed: `airadar` DB/RabbitMQ identifiers, Kotlin package
-`wiki.nplus.airadar`, `docs/adr/*`.
+`wiki.nplus.airadar`, `docs/adr/*`. (Compose project/volume/container names ARE
+renamed under the full-migration choice — hence the volume migration above.)
 
 ## P2 — Product / positioning
 

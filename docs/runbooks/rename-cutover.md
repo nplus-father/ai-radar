@@ -62,18 +62,51 @@ Old `ai-radar-*` packages can be deleted later.
   Personal-scale, low traffic → acceptable. If a redirect is wanted, keep the
   old repo as a stub with a meta-refresh `index.html`. Not doing so is fine.
 
-### 5. Deploy host — recreate the stack
+### 5. Deploy host — recreate the stack (⚠️ MIGRATE VOLUMES FIRST)
+
+**Data-loss trap:** the compose `name:` changes `ai-radar → bookshelf-echo`.
+Docker named volumes are prefixed by project name, so the live database and
+queue live in `ai-radar_pg-data` / `ai-radar_rabbitmq-data`. A plain
+`down` + `up` under the new project would create **empty** `bookshelf-echo_*`
+volumes — every item/match/essay and all queued messages gone. The volumes
+MUST be migrated (copied) before the new project starts.
+
 ```
 cd ~/workspace
-mv ai-radar bookshelf-echo            # rename checkout dir
+# 5a. stop the OLD project explicitly (name is still ai-radar on the host copy)
+docker compose -p ai-radar -f ai-radar/docker-compose.yml down
+
+# 5b. copy each named volume ai-radar_* -> bookshelf-echo_*
+for v in pg-data rabbitmq-data; do
+  docker volume create "bookshelf-echo_$v"
+  docker run --rm -v "ai-radar_$v":/from -v "bookshelf-echo_$v":/to alpine \
+    sh -c 'cd /from && cp -a . /to && echo "copied $v"'
+done
+
+# 5c. rename checkout dirs + remotes
+mv ai-radar bookshelf-echo
 mv ai-radar-site bookshelf-echo-site
 cd bookshelf-echo
 git remote set-url origin https://github.com/nplus-father/bookshelf-echo.git
 git pull
-# compose project + container + image names all changed → full recreate
-docker compose down                   # tears down old ai-radar-* containers
-docker compose up -d                  # brings up bookshelf-echo-* containers
+
+# 5d. bring up the NEW project (uses the copied bookshelf-echo_* volumes)
+docker compose up -d
+
+# 5e. VERIFY before deleting anything
+docker compose exec postgres psql -U airadar -d airadar \
+  -c "SELECT count(*) FROM items;" -c "SELECT count(*) FROM matches;"
+docker compose exec rabbitmq rabbitmqctl list_queues name messages | head
+# only once counts match the pre-cutover numbers:
+#   docker volume rm ai-radar_pg-data ai-radar_rabbitmq-data
 ```
+
+Zero-copy alternative (skip 5b) if you'd rather keep the existing data in
+place: pin the volumes to their current names in `docker-compose.yml` so the
+new project reuses them —
+`volumes: {pg-data: {name: ai-radar_pg-data, external: true}, rabbitmq-data: {name: ai-radar_rabbitmq-data, external: true}}`.
+Leaves `ai-radar` in the volume names forever (cosmetic), no downtime for copy.
+
 The compose default network changes `ai-radar_default → bookshelf-echo_default`
 (internal, referenced as `default`; nothing external depends on the literal
 name). `infra-shared-network` is external and unchanged.

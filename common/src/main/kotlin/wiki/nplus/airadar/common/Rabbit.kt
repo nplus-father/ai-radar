@@ -31,7 +31,7 @@ object Rabbit {
         port = Config.int("RABBITMQ_PORT", 5672)
         username = Config.str("RABBITMQ_USER", "airadar")
         password = Config.str("RABBITMQ_PASSWORD")
-    }.newConnection("ai-radar-$appName")
+    }.newConnection("bookshelf-echo-$appName")
 
     fun declareTopology(channel: Channel) {
         channel.exchangeDeclare(RabbitTopology.INGEST_EXCHANGE, "topic", true)

@@ -18,7 +18,7 @@ object DigestRenderer {
         val (headlines, alsoSeen) = items.partition { it.significanceScore >= HEADLINE_MIN_SCORE }
         return buildString {
             appendLine("---")
-            appendLine("title: \"AI Radar — $day\"")
+            appendLine("title: \"Bookshelf Echo — $day\"")
             appendLine("date: $day")
             appendLine("itemCount: ${items.size}")
             appendLine("---")
@@ -47,7 +47,7 @@ object DigestRenderer {
         val highlights = items.filter { it.significanceScore >= HEADLINE_MIN_SCORE }
         return buildString {
             appendLine("---")
-            appendLine("title: \"AI Radar Weekly — $isoWeekLabel\"")
+            appendLine("title: \"Bookshelf Echo Weekly — $isoWeekLabel\"")
             appendLine("date: $weekStart")
             appendLine("itemCount: ${items.size}")
             appendLine("highlightCount: ${highlights.size}")

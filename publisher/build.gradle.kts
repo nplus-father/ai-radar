@@ -15,7 +15,7 @@ application {
 jib {
     from { image = "eclipse-temurin:21-jre-alpine" }
     to {
-        image = "ghcr.io/nplus-father/ai-radar-publisher"
+        image = "ghcr.io/nplus-father/bookshelf-echo-publisher"
         tags = setOf("latest", project.version.toString())
     }
     container {

@@ -1,12 +1,12 @@
-# Local/host stack for ai-radar. Zero-inbound posture (ADR-006): every port
+# Local/host stack for bookshelf-echo. Zero-inbound posture (ADR-006): every port
 # binds to 127.0.0.1 only — the pipeline needs egress exclusively, the public
 # face is the statically built site on GitHub Pages.
-name: ai-radar
+name: bookshelf-echo
 
 services:
   rabbitmq:
     image: rabbitmq:4-management
-    container_name: ai-radar-rabbitmq
+    container_name: bookshelf-echo-rabbitmq
     ports:
       - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
       - "127.0.0.1:${RABBITMQ_MGMT_PORT:-15672}:15672"
@@ -62,7 +62,7 @@ services:
         condition: service_healthy
 
   # ---- pipeline apps (JVM, Jib images) ---------------------------------------
-  # Each joins the ai-radar default net (to reach postgres/rabbitmq by name) and
+  # Each joins the bookshelf-echo default net (to reach postgres/rabbitmq by name) and
   # the external infra-shared-network (so infra-prometheus can scrape its
   # 127.0.0.1-free metrics port). Config comes from .env; the vars below override
   # it for in-container networking. Metrics ports are NOT published to the host —
@@ -72,8 +72,8 @@ services:
   # conflict; inside the network each service always listens on its stock port,
   # so they are pinned here rather than inherited from .env.
   producers:
-    image: ${AI_RADAR_PRODUCERS_IMAGE:-ghcr.io/nplus-father/ai-radar-producers:latest}
-    container_name: ai-radar-producers
+    image: ${BOOKSHELF_ECHO_PRODUCERS_IMAGE:-ghcr.io/nplus-father/bookshelf-echo-producers:latest}
+    container_name: bookshelf-echo-producers
     env_file: [.env]
     environment: &app-env
       DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-airadar}
@@ -89,8 +89,8 @@ services:
     networks: [default, infra-shared]
 
   enricher:
-    image: ${AI_RADAR_ENRICHER_IMAGE:-ghcr.io/nplus-father/ai-radar-enricher:latest}
-    container_name: ai-radar-enricher
+    image: ${BOOKSHELF_ECHO_ENRICHER_IMAGE:-ghcr.io/nplus-father/bookshelf-echo-enricher:latest}
+    container_name: bookshelf-echo-enricher
     env_file: [.env]
     environment: *app-env
     depends_on:
@@ -103,8 +103,8 @@ services:
   # Resonance gate (ADR-010): needs library-bridge on infra-shared-network
   # (the nplus-infra stack). Outbound HTTP only — zero-inbound holds.
   matcher:
-    image: ${AI_RADAR_MATCHER_IMAGE:-ghcr.io/nplus-father/ai-radar-matcher:latest}
-    container_name: ai-radar-matcher
+    image: ${BOOKSHELF_ECHO_MATCHER_IMAGE:-ghcr.io/nplus-father/bookshelf-echo-matcher:latest}
+    container_name: bookshelf-echo-matcher
     env_file: [.env]
     environment: *app-env
     depends_on:
@@ -115,8 +115,8 @@ services:
     networks: [default, infra-shared]
 
   digester:
-    image: ${AI_RADAR_DIGESTER_IMAGE:-ghcr.io/nplus-father/ai-radar-digester:latest}
-    container_name: ai-radar-digester
+    image: ${BOOKSHELF_ECHO_DIGESTER_IMAGE:-ghcr.io/nplus-father/bookshelf-echo-digester:latest}
+    container_name: bookshelf-echo-digester
     env_file: [.env]
     environment: *app-env
     depends_on:
@@ -127,8 +127,8 @@ services:
     networks: [default, infra-shared]
 
   publisher:
-    image: ${AI_RADAR_PUBLISHER_IMAGE:-ghcr.io/nplus-father/ai-radar-publisher:latest}
-    container_name: ai-radar-publisher
+    image: ${BOOKSHELF_ECHO_PUBLISHER_IMAGE:-ghcr.io/nplus-father/bookshelf-echo-publisher:latest}
+    container_name: bookshelf-echo-publisher
     env_file: [.env]
     environment:
       <<: *app-env
@@ -143,15 +143,15 @@ services:
     networks: [default, infra-shared]
 
   # ---- site auto-publisher --------------------------------------------------
-  # Syncs the publisher's markdown into the sibling ai-radar-site checkout and
+  # Syncs the publisher's markdown into the sibling bookshelf-echo-site checkout and
   # pushes it, so GitHub Actions rebuilds the public Astro site
-  # (nplus.wiki/ai-radar-site). Keeps the JRE publisher image git-free.
+  # (nplus.wiki/bookshelf-echo-site). Keeps the JRE publisher image git-free.
   site-publisher:
     image: alpine/git
     entrypoint: ["/bin/sh", "/scripts/site-publish.sh"]
     volumes:
       - ./out/content:/src:ro
-      - ../ai-radar-site:/repo
+      - ../bookshelf-echo-site:/repo
       - ./config/site-publish.sh:/scripts/site-publish.sh:ro
     environment:
       SITE_GIT_TOKEN: ${SITE_GIT_TOKEN:?set in .env}
@@ -165,7 +165,7 @@ volumes:
   pg-data:
 
 networks:
-  # ai-radar's own bridge (auto-created as ai-radar_default) is referenced as
+  # bookshelf-echo's own bridge (auto-created as bookshelf-echo_default) is referenced as
   # `default`; infra-shared-network is created by the nplus-infra stack.
   infra-shared:
     name: infra-shared-network

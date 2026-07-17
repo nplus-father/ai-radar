@@ -28,7 +28,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Jib builds one image per app module and pushes:
-      #   ghcr.io/nplus-father/ai-radar-{producers,enricher,matcher,digester,publisher}
+      #   ghcr.io/nplus-father/bookshelf-echo-{producers,enricher,matcher,digester,publisher}
       - name: Build & push all images with Jib
         run: |
           chmod +x gradlew
@@ -46,7 +46,7 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           envs: GHCR_TOKEN
           script: |
-            cd ~/workspace/ai-radar
+            cd ~/workspace/bookshelf-echo
             echo "$GHCR_TOKEN" | docker login ghcr.io -u andrewnplus --password-stdin
             git pull --ff-only
             docker compose pull producers enricher matcher digester publisher
@@ -57,6 +57,6 @@ jobs:
             # (caused the 2026-07-12 publishing outage). Restart to reload the script.
             docker compose restart site-publisher
             docker image prune -f
-            echo "ai-radar deploy completed at $(date)"
+            echo "bookshelf-echo deploy completed at $(date)"
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}

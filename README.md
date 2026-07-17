@@ -1,4 +1,4 @@
-# ai-radar
+# bookshelf-echo
 
 A queue-based pipeline that collects AI-related news and papers from multiple
 sources, digests them with an LLM, and publishes a daily static digest — plus a

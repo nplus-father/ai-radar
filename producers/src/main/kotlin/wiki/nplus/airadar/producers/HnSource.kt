@@ -29,7 +29,7 @@ class HnSource(private val http: HttpClient) {
             "&numericFilters=${URLEncoder.encode("points>$minPoints", Charsets.UTF_8)}"
         val request = HttpRequest.newBuilder(URI.create(url))
             .timeout(Duration.ofSeconds(20))
-            .header("User-Agent", "ai-radar/0.1 (personal project)")
+            .header("User-Agent", "bookshelf-echo/0.1 (personal project)")
             .GET()
             .build()
         val response = http.send(request, HttpResponse.BodyHandlers.ofString())

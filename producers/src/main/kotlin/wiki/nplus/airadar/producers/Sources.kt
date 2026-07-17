@@ -18,7 +18,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 
-private const val UA = "ai-radar/0.1 (personal project; +https://github.com/nplus-father/ai-radar)"
+private const val UA = "bookshelf-echo/0.1 (personal project; +https://github.com/nplus-father/bookshelf-echo)"
 
 private fun get(http: HttpClient, url: String, vararg headers: String): String {
     val builder = HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(25)).header("User-Agent", UA)

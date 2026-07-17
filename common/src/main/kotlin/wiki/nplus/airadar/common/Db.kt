@@ -13,7 +13,7 @@ object Db {
             )
             username = Config.str("POSTGRES_USER", "airadar")
             password = Config.str("POSTGRES_PASSWORD")
-            poolName = "ai-radar-$appName"
+            poolName = "bookshelf-echo-$appName"
             maximumPoolSize = 4
         },
     )

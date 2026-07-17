@@ -1,15 +1,15 @@
 #!/bin/sh
 # Sync the pipeline's output — digest markdown + the metrics snapshot — into the
-# ai-radar-site checkout and push, so GitHub Actions rebuilds the public site.
+# bookshelf-echo-site checkout and push, so GitHub Actions rebuilds the public site.
 # Runs as a compose sidecar; keeps the publisher itself unchanged (no git needed
 # in the JRE image).
 set -eu
 
 git config --global --add safe.directory /repo
-git config --global user.name "ai-radar-bot"
+git config --global user.name "bookshelf-echo-bot"
 git config --global user.email "bot@nplus.wiki"
 
-REPO_URL="https://x-access-token:${SITE_GIT_TOKEN}@github.com/nplus-father/ai-radar-site.git"
+REPO_URL="https://x-access-token:${SITE_GIT_TOKEN}@github.com/nplus-father/bookshelf-echo-site.git"
 INTERVAL="${SYNC_INTERVAL_SECONDS:-300}"
 echo "site-publisher: syncing /src -> /repo/{content,public} every ${INTERVAL}s"
 

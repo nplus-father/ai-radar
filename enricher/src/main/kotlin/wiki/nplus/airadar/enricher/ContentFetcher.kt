@@ -18,7 +18,7 @@ class ContentFetcher {
      */
     fun fetch(url: String): Fetched = try {
         val doc = Jsoup.connect(url)
-            .userAgent("ai-radar/0.1 (personal project)")
+            .userAgent("bookshelf-echo/0.1 (personal project)")
             .timeout(timeoutMillis)
             .get()
         doc.select("script, style, nav, header, footer, aside").remove()

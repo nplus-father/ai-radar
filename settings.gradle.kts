@@ -8,6 +8,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ai-radar"
+rootProject.name = "bookshelf-echo"
 
 include("common", "producers", "enricher", "matcher", "digester", "publisher", "ops")

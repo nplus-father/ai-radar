@@ -138,7 +138,43 @@ The LINE card still reads "📡 AI Radar" — cosmetic; rebrand the display stri
 (`AiRadarService`, `AiRadarFlexBuilder`) in a separate PR once that repo's WIP
 settles.
 
+## 8. Host wrap-up (run on `nplus.space` as `andrew` — needs the `.env` and github SSH)
+
+Two steps the CI deploy cannot do (it runs `restart site-publisher`, which no-ops
+after a `down` removed the container; and it never touches the infra stack):
+
+```
+# 8a. Bring site-publisher back (else a composed essay never syncs to the site)
+cd /home/andrew/workspace/bookshelf-echo
+docker compose up -d site-publisher
+docker compose ps site-publisher                    # expect: Up
+docker compose logs --tail=30 site-publisher        # expect: sync/push, no auth error
+
+# 8b. Point Prometheus at the new targets
+cd /home/andrew/workspace/nplus-infra
+git pull --ff-only origin main                       # brings the target/label rename
+docker restart infra-prometheus
+sleep 5
+docker exec infra-prometheus wget -qO- 'http://localhost:9090/api/v1/targets?state=active' \
+  | grep -o 'bookshelf-echo-[a-z]*:[0-9]*' | sort -u # expect: producers/enricher/digester/publisher
+```
+
+Then Grafana (deferrable): panels querying `app="ai-radar"` → `app="bookshelf-echo"`
+(old samples keep the old label — expected discontinuity, no backfill).
+
+Do NOT yet delete old `ai-radar_{pg,rabbitmq}-data` volumes or ghcr `ai-radar-*`
+packages — keep a few days for rollback confidence.
+
+Final acceptance (the morning after a nightly cycle):
+```
+docker exec -i bookshelf-echo-postgres-1 psql -U airadar -d airadar \
+  -c "select day, picked_count from selection_runs order by day desc limit 3;" \
+  -c "select count(*) from essays;"
+```
+A new `selection_runs` row appears after 21:00 UTC; `essays > 0` after 22:00 UTC
+means the P0 pool-mismatch fix works end to end (first-ever 書櫃評析 essay).
+
 ## Rollback
 Each repo's `main` can revert the rename merge; re-run CI to restore
-`ai-radar-*` images; `git mv` the host dirs back; reset the two env vars. The
+`ai-radar-*` images; `git mv` the host dirs back; reset the env var. The
 GitHub repo names can be renamed back (redirects make this safe).

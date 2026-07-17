@@ -85,18 +85,29 @@ migration, done manually** (not a plain `git merge`). Full runbook:
 
 - [x] **Site** — `rename/bookshelf-echo` merged to `main` and pushed
       (2026-07-17). GitHub Actions rebuilds Pages at `/bookshelf-echo-site/`.
-- [ ] **Pipeline** — do NOT just merge to main: the branch changes the compose
-      project name, so a plain deploy would create empty `bookshelf-echo_*`
-      volumes and **wipe the Postgres DB + queue**. Must be a hand-run cutover
-      on the deploy host with **volume migration** (`ai-radar_{pg,rabbitmq}-data
-      → bookshelf-echo_*`, verify row counts, then merge + `docker compose up`).
-      See runbook §5.
-- [ ] Merge `Andrewnplus/nplus-infra` (prometheus targets) in lockstep with the
-      pipeline container rename; reload Prometheus + fix Grafana `app=` label.
-- [ ] nplus-backend LINE job: set env `AI_RADAR_DAILY_URL` /
-      `AI_RADAR_ESSAY_URL` → `.../bookshelf-echo-site/...` (no code change).
+- [x] **Pipeline** — done 2026-07-18. Hand-run cutover on the deploy host:
+      stopped `-p ai-radar`, copied `ai-radar_{pg,rabbitmq}-data →
+      bookshelf-echo_*`, merged + pushed main, CI rebuilt images and deployed.
+      Volume migration verified — no data loss (counts only rose from live
+      traffic: items 719→724, matches 447→451; digests/essays/shortlist/usage
+      unchanged). All 7 `bookshelf-echo-*` containers up. See runbook §5.
+- [~] Merge `Andrewnplus/nplus-infra` (prometheus targets): merged + pushed.
+      Host `git pull` + `docker restart infra-prometheus` still pending (needs
+      andrew on host). Grafana `app=` label still to fix.
+- [x] nplus-backend LINE job: env set 2026-07-18 in `nplus-infra/backend.env`
+      (host-only, gitignored), `docker compose up -d backend` → healthy,
+      `ai_radar_daily_push [enabled]` 08:00 schedule loaded. NOTE: backend reads
+      only `AI_RADAR_DAILY_URL` (`Env.aiRadarDailyUrl`, `Env.kt:89`);
+      `AI_RADAR_ESSAY_URL` is a phantom — code never reads it, do NOT set it.
+      Real failure mode was worse than first reported: a 404 on `daily.json`
+      makes `AiRadarDigestFetcher.fetch()` fail so the WHOLE card fails to send
+      (not "broken on click"); the footer link is `daily.pageUrl` from the
+      payload (site-publisher writes it), not a backend env var.
 - [ ] Optional later: rebrand the LINE card "📡 AI Radar" heading once that
       repo's WIP settles. Old `nplus.wiki/ai-radar-site/...` links will 404.
+- [ ] Cleanup (after a few days' confidence): delete old `ai-radar_{pg,rabbitmq}
+      -data` volumes and old ghcr `ai-radar-*` packages; fix the host git remote
+      URL (still `ai-radar`, works via GitHub redirect).
 
 Deliberately NOT renamed: `airadar` DB/RabbitMQ identifiers, Kotlin package
 `wiki.nplus.airadar`, `docs/adr/*`. (Compose project/volume/container names ARE

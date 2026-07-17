@@ -118,16 +118,25 @@ recreate its container) so it scrapes the new `bookshelf-echo-*` targets.
 `app="bookshelf-echo"`; there is a label discontinuity in metrics history
 (old samples keep the old label — expected).
 
-### 7. LINE daily push (nplus-backend) — env vars only, no code change
-Set on the backend's runtime env (the `AiRadar*` code reads these; the
-hardcoded values are only fallbacks):
+### 7. LINE daily push (nplus-backend) — one env var, no code change
+Set ONE var on the backend's runtime env (`nplus-infra/backend.env`, host-only,
+gitignored), then `docker compose up -d backend` to recreate:
 ```
 AI_RADAR_DAILY_URL=https://nplus.wiki/bookshelf-echo-site/daily.json
-AI_RADAR_ESSAY_URL=https://nplus.wiki/bookshelf-echo-site/essay.json
 ```
-Restart the backend. The LINE card still reads "📡 AI Radar" — cosmetic;
-rebrand the display strings (`AiRadarService`, `AiRadarFlexBuilder`) in a
-separate PR once that repo's WIP settles.
+Only `AI_RADAR_DAILY_URL` matters — the backend reads it via `Env.aiRadarDailyUrl`
+(`Env.kt:89`). There is NO `AI_RADAR_ESSAY_URL` in the code; do not set it (it
+was a phantom in an earlier draft of this runbook). The "read more" footer link
+is `daily.pageUrl` from the payload itself (site-publisher writes it into
+`daily.json`), not a backend env var — so this one var fully fixes the URL.
+
+Why it matters: if `daily.json` 404s, `AiRadarDigestFetcher.fetch()` fails and
+the ENTIRE card fails to send (not merely "broken when clicked") — the daily
+LINE push silently stops until this is set.
+
+The LINE card still reads "📡 AI Radar" — cosmetic; rebrand the display strings
+(`AiRadarService`, `AiRadarFlexBuilder`) in a separate PR once that repo's WIP
+settles.
 
 ## Rollback
 Each repo's `main` can revert the rename merge; re-run CI to restore

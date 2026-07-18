@@ -25,6 +25,7 @@ fun main() = wiki.nplus.airadar.common.App.main("publisher") {
     val registry = wiki.nplus.airadar.common.Metrics.start("publisher", 9104)
     val repo = ItemRepository(Db.dataSource("publisher"))
     val contentDir = Path.of(Config.str("CONTENT_DIR", "out/content"))
+    val publishDigest = Config.bool("PUBLISH_DIGEST", false)
     val connection = Rabbit.connect("publisher")
     val channel = connection.createChannel()
     Rabbit.declareTopology(channel)
@@ -49,6 +50,16 @@ fun main() = wiki.nplus.airadar.common.App.main("publisher") {
         }
         val itemId = message.itemId
         val item = repo.findItem(itemId) ?: error("item $itemId not found")
+
+        // Digest pages are retired from the site (2026-07-18): the product is
+        // the daily essay, and the Highlights/Also-seen list stops being the
+        // storefront. The digesting itself stays — the curator ranks on it —
+        // so the item still advances to PUBLISHED; only the markdown stops.
+        if (!publishDigest) {
+            repo.transition(itemId, ItemState.DIGESTED, ItemState.PUBLISHED)
+            repo.recordPublish("DAILY", "(digest publishing disabled)", null, 0, "SKIPPED")
+            return@consume
+        }
 
         val day = pageDay(item)
         val items = repo.digestsForDay(day)

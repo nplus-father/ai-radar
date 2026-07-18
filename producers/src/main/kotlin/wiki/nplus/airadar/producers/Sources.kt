@@ -109,6 +109,59 @@ class NewsSource(private val http: HttpClient) {
     }
 }
 
+/**
+ * Deep journalism via the Guardian Content API (free developer tier: 5,000
+ * calls/day). Unlike the RSS sources this returns the FULL article body
+ * (`show-fields=bodyText`), which rides along in rawPayload so the enricher
+ * can skip scraping and the matcher embeds real article content instead of a
+ * headline. Queries are one API call per configured filter: the Long Read
+ * series (3–6k-word reported essays) and Comment is Free (argued opinion) —
+ * the genres a bookshelf can actually talk to.
+ */
+class GuardianSource(private val http: HttpClient) {
+    private val apiKey = Config.str("GUARDIAN_API_KEY", "")
+    private val pageSize = Config.int("GUARDIAN_PAGE_SIZE", 10)
+    private val queries = Config.str(
+        "GUARDIAN_QUERIES",
+        "tag=news/series/the-long-read,section=commentisfree",
+    ).split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    fun poll(): List<ItemEnvelope> {
+        check(apiKey.isNotBlank()) { "GUARDIAN_API_KEY is not set" }
+        return queries.flatMap { filter ->
+            runCatching { fetch(filter) }
+                .getOrElse { emptyList() } // one failing filter must not block the others
+        }.distinctBy { it.externalId } // an item can carry both the tag and the section
+    }
+
+    private fun fetch(filter: String): List<ItemEnvelope> {
+        val body = get(
+            http,
+            "https://content.guardianapis.com/search?$filter" +
+                "&show-fields=bodyText,trailText&order-by=newest&page-size=$pageSize&api-key=$apiKey",
+        )
+        val response = Json.parseToJsonElement(body).jsonObject["response"]!!.jsonObject
+        return response["results"]!!.jsonArray.map { it.jsonObject }.mapNotNull { article ->
+            val fields = article["fields"]?.jsonObject
+            val bodyText = fields?.get("bodyText")?.jsonPrimitive?.content
+            // No body, nothing to resonate with (galleries, podcasts): skip.
+            if (bodyText.isNullOrBlank()) return@mapNotNull null
+            ItemEnvelope(
+                source = "guardian",
+                externalId = article["id"]!!.jsonPrimitive.content,
+                url = article["webUrl"]!!.jsonPrimitive.content,
+                title = article["webTitle"]!!.jsonPrimitive.content.trim(),
+                publishedAt = article["webPublicationDate"]!!.jsonPrimitive.content,
+                rawPayload = buildJsonObject {
+                    put("filter", filter)
+                    put("bodyText", bodyText)
+                    fields["trailText"]?.jsonPrimitive?.content?.let { put("trailText", it) }
+                },
+            )
+        }
+    }
+}
+
 /** Fast-rising recent repositories via the GitHub search API. */
 class GhTrendingSource(private val http: HttpClient) {
     fun poll(): List<ItemEnvelope> {

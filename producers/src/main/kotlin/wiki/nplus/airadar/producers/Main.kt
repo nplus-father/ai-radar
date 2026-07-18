@@ -36,11 +36,16 @@ fun main() = wiki.nplus.airadar.common.App.main("producers") {
         Source("gh-trending", 1440, GhTrendingSource(http)::poll),
         Source("blogs", 240, BlogsSource(http)::poll),
         Source("news", 180, NewsSource(http)::poll),
+        Source("guardian", 180, GuardianSource(http)::poll),
         // reddit is off by default: the public JSON API now 403s scripted
         // clients; enabling it requires OAuth support first.
         Source("reddit", 1440, RedditSource(http)::poll),
     )
-    val enabled = Config.str("SOURCES", "hn,arxiv,gh-trending,blogs,news").split(',').map { it.trim() }.toSet()
+    // guardian only by default: the product is one book-informed essay a day on
+    // a piece of deep journalism, and the other sources (headlines, HN, repos)
+    // only pollute the candidate funnel — the ADR-010 calibration showed noisy
+    // items steal the strongest resonance scores. Re-enable via SOURCES.
+    val enabled = Config.str("SOURCES", "guardian").split(',').map { it.trim() }.toSet()
     val sources = all.filter { it.name in enabled }
     log.info("enabled sources: {}", sources.joinToString { it.name })
 

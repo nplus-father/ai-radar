@@ -237,8 +237,7 @@ class GeminiClient(
     }
 
     internal fun parseResponse(body: String, model: String): DigestResult {
-        val (payload, inputTokens, outputTokens) = extractPayload(body)
-        val digest = Json.parseToJsonElement(payload).jsonObject
+        val (digest, inputTokens, outputTokens) = extractPayload(body)
         return DigestResult(
             summaryZh = digest.required("summary_zh"),
             summaryEn = digest.required("summary_en"),
@@ -253,8 +252,8 @@ class GeminiClient(
     }
 
     internal fun parseSelection(body: String, model: String): SelectResult {
-        val (payload, inputTokens, outputTokens) = extractPayload(body)
-        val picks = Json.parseToJsonElement(payload).jsonObject["picks"]?.jsonArray
+        val (obj, inputTokens, outputTokens) = extractPayload(body)
+        val picks = obj["picks"]?.jsonArray
             ?: error("selection JSON missing picks")
         return SelectResult(
             picks = picks.map { p ->
@@ -331,8 +330,7 @@ class GeminiClient(
     }
 
     internal fun parseCritique(body: String, model: String): CritiqueResult {
-        val (payload, inputTokens, outputTokens) = extractPayload(body)
-        val verdict = Json.parseToJsonElement(payload).jsonObject
+        val (verdict, inputTokens, outputTokens) = extractPayload(body)
         return CritiqueResult(
             pass = verdict["pass"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
                 ?: error("critique JSON missing pass"),
@@ -344,8 +342,7 @@ class GeminiClient(
     }
 
     internal fun parseJudge(body: String, model: String): JudgeResult {
-        val (payload, inputTokens, outputTokens) = extractPayload(body)
-        val judge = Json.parseToJsonElement(payload).jsonObject
+        val (judge, inputTokens, outputTokens) = extractPayload(body)
         return JudgeResult(
             related = judge["related"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
                 ?: error("judge JSON missing related"),
@@ -357,8 +354,7 @@ class GeminiClient(
     }
 
     internal fun parseEssay(body: String, model: String): EssayResult {
-        val (payload, inputTokens, outputTokens) = extractPayload(body)
-        val essay = Json.parseToJsonElement(payload).jsonObject
+        val (essay, inputTokens, outputTokens) = extractPayload(body)
         val skip = essay["skip"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
         if (!skip && essay["essay_md"]?.jsonPrimitive?.content.isNullOrBlank()) {
             error("essay JSON has skip=false but no essay_md")
@@ -375,22 +371,44 @@ class GeminiClient(
         )
     }
 
-    private data class Payload(val text: String, val inputTokens: Int, val outputTokens: Int)
+    private data class Payload(val obj: JsonObject, val inputTokens: Int, val outputTokens: Int)
 
+    /**
+     * Pull the model's JSON object out of a Gemini envelope. Both failure modes
+     * that clog the DLQ — an empty response (SAFETY block / no parts) and a
+     * truncated response (MAX_TOKENS → invalid JSON) — are surfaced with the
+     * `finishReason`/`blockReason` in the message, so `ops dlq list` shows *why*
+     * the item parked instead of an opaque parser offset.
+     */
     private fun extractPayload(body: String): Payload {
         val root = Json.parseToJsonElement(body).jsonObject
-        val text = root["candidates"]?.jsonArray?.firstOrNull()?.jsonObject
-            ?.get("content")?.jsonObject
+        val candidate = root["candidates"]?.jsonArray?.firstOrNull()?.jsonObject
+        val finishReason = candidate?.get("finishReason")?.jsonPrimitive?.content
+        val text = candidate?.get("content")?.jsonObject
             ?.get("parts")?.jsonArray?.firstOrNull()?.jsonObject
             ?.get("text")?.jsonPrimitive?.content
-            ?: error("Gemini response missing candidates[0].content.parts[0].text: ${body.take(300)}")
+            ?: run {
+                val block = root["promptFeedback"]?.jsonObject?.get("blockReason")?.jsonPrimitive?.content
+                error("Gemini returned no text${reasonSuffix(finishReason, block)}: ${body.take(300)}")
+            }
+        val obj = try {
+            Json.parseToJsonElement(text.trim()).jsonObject
+        } catch (e: Exception) {
+            error("Gemini output was not valid JSON${reasonSuffix(finishReason, null)}: ${text.trim().take(300)}")
+        }
         val usage = root["usageMetadata"]?.jsonObject
         return Payload(
-            text = text.trim(),
+            obj = obj,
             inputTokens = usage?.get("promptTokenCount")?.jsonPrimitive?.int ?: 0,
             outputTokens = usage?.get("candidatesTokenCount")?.jsonPrimitive?.int ?: 0,
         )
     }
+
+    private fun reasonSuffix(finishReason: String?, blockReason: String?): String =
+        listOfNotNull(
+            finishReason?.let { "finishReason=$it" },
+            blockReason?.let { "blockReason=$it" },
+        ).joinToString(", ").let { if (it.isEmpty()) "" else " ($it)" }
 
     override fun cost(inputTokens: Int, outputTokens: Int): Double =
         inputTokens * inputUsdPerMTok / 1_000_000 + outputTokens * outputUsdPerMTok / 1_000_000

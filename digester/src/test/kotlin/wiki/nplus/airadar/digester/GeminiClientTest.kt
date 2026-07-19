@@ -2,6 +2,7 @@ package wiki.nplus.airadar.digester
 
 import java.net.http.HttpClient
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
@@ -42,6 +43,31 @@ class GeminiClientTest {
     fun `missing required field fails fast (goes to DLQ, not retry)`() {
         val body = sampleResponse.replace("summary_zh", "summary_xx")
         assertFailsWith<IllegalStateException> { client().parseResponse(body, "gemini-test") }
+    }
+
+    @Test
+    fun `a safety-blocked response names the reason (diagnosable DLQ)`() {
+        val body = """
+            {
+              "candidates": [{"finishReason": "SAFETY", "content": {"parts": []}}],
+              "promptFeedback": {"blockReason": "SAFETY"}
+            }
+        """.trimIndent()
+        val e = assertFailsWith<IllegalStateException> { client().parseResponse(body, "gemini-test") }
+        assertContains(e.message ?: "", "SAFETY")
+    }
+
+    @Test
+    fun `a truncated response names MAX_TOKENS instead of an opaque parser error`() {
+        // finishReason=MAX_TOKENS with the inner JSON cut off mid-object.
+        val body = """
+            {
+              "candidates": [{"finishReason": "MAX_TOKENS", "content": {"parts": [{"text": "{\"summary_zh\": \"半句就被截"}]}}],
+              "usageMetadata": {"promptTokenCount": 1200, "candidatesTokenCount": 8192}
+            }
+        """.trimIndent()
+        val e = assertFailsWith<IllegalStateException> { client().parseResponse(body, "gemini-test") }
+        assertContains(e.message ?: "", "MAX_TOKENS")
     }
 
     @Test

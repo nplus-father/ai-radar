@@ -122,6 +122,31 @@ the DB — the DB is the source of truth for page content.
 > ./ops/build/install/ops/bin/ops republish <in-flight day>   # e.g. the deploy day
 > ```
 
+## Migrating already-published essays after an EssayRenderer change
+
+Essay files are **not** hand-editable: `config/site-publish.sh` mirrors the
+publisher's whole `essays/` output dir into the site checkout every cycle
+(`cp -r /src/essays/. /repo/content/essays/`), so any manual edit to
+`content/essays/<day>.md` is reverted within one interval to whatever the
+publisher last wrote to its output volume. The volume — i.e. the publisher — is
+the source of truth for essay content.
+
+So a change to `EssayRenderer` (new frontmatter, etc.) only reaches essays
+composed *after* the deploy. Essays already on disk keep their old format until
+the publisher re-renders them. After deploying the new publisher, re-render each
+affected day:
+
+```bash
+./ops/build/install/ops/bin/ops republish-essay 2026-07-17
+```
+
+This re-emits the day's essay message (`kind=essay`) onto `publish.q`; the
+publisher rewrites `essays/<day>.md` from Postgres with the current renderer, and
+site-publisher mirrors it on the next cycle. Idempotent, so safe to re-run. The
+book/chapter fields it can emit are only as rich as that essay's stored
+`essays.books` JSON (e.g. `chapter_id` is present only if retrieval captured it
+at compose time).
+
 ## Broker upgrade discipline (ADR-002)
 
 RabbitMQ minor upgrades changed queue semantics before (4.3 vs transient

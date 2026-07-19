@@ -256,6 +256,14 @@ class ItemRepository(private val ds: DataSource) {
         }
     }
 
+    /** The item whose essay was composed on [day], for `ops republish-essay`. */
+    fun essayItemOn(day: LocalDate): Long? = ds.connection.use { c ->
+        c.prepareStatement("SELECT item_id FROM essays WHERE day = ?::date").use { st ->
+            st.setString(1, day.toString())
+            st.executeQuery().use { rs -> if (rs.next()) rs.getLong(1) else null }
+        }
+    }
+
     /** Ids of every item sitting in [state], oldest first. Drives `ops redrive`. */
     fun itemIdsInState(state: ItemState): List<Long> = ds.connection.use { c ->
         c.prepareStatement("SELECT id FROM items WHERE state = ? ORDER BY id").use { st ->

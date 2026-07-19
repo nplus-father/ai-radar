@@ -18,6 +18,7 @@ import kotlin.system.exitProcess
  *                           retry count reset (a replay is a fresh chance)
  *   dlq purge --confirm     drop everything parked
  *   republish <YYYY-MM-DD>  rebuild a day's digest page from the DB
+ *   republish-essay <YYYY-MM-DD>  re-render a day's essay with the current renderer
  *   redrive [--apply]       re-queue items stranded mid-pipeline
  *   shortlist [ttl_days]    list picks awaiting composition (ADR-009)
  */
@@ -25,6 +26,7 @@ fun main(args: Array<String>) {
     when (args.firstOrNull()) {
         "dlq" -> dlq(args)
         "republish" -> republish(args)
+        "republish-essay" -> republishEssay(args)
         "redrive" -> redrive(args)
         "shortlist" -> shortlist(args)
         else -> usage()
@@ -120,6 +122,32 @@ private fun republish(args: Array<String>) {
     connection.close()
 }
 
+/**
+ * Re-emits a day's essay message onto publish.q so the publisher re-renders
+ * essays/<day>.md from the DB with the current EssayRenderer. Use it after an
+ * EssayRenderer/frontmatter change to migrate an already-published essay whose
+ * file on disk (and in the site checkout) is still the old format — the
+ * site-publisher then mirrors the refreshed file. Idempotent.
+ */
+private fun republishEssay(args: Array<String>) {
+    val day = args.getOrNull(1)?.let {
+        runCatching { LocalDate.parse(it) }.getOrElse { usage() }
+    } ?: usage()
+    val repo = ItemRepository(Db.dataSource("ops"))
+    val itemId = repo.essayItemOn(day)
+    if (itemId == null) {
+        println("no essay composed on $day — nothing to rebuild")
+        exitProcess(1)
+    }
+    val connection = Rabbit.connect("ops")
+    val channel = connection.createChannel()
+    Rabbit.declareTopology(channel)
+    Rabbit.publish(channel, "", RabbitTopology.PUBLISH_QUEUE, StageMessage(itemId, kind = "essay").encode())
+    println("queued rebuild of essays/$day.md (via item $itemId)")
+    channel.close()
+    connection.close()
+}
+
 private fun dlq(args: Array<String>) {
     val connection = Rabbit.connect("ops")
     val channel = connection.createChannel()
@@ -188,6 +216,9 @@ private fun usage(): Nothing {
           dlq replay [limit]      move parked messages back to their origin queue
           dlq purge --confirm     drop everything parked
           republish <YYYY-MM-DD>  rebuild that UTC day's digest page from the DB
+          republish-essay <YYYY-MM-DD>
+                                  re-render that day's essay with the current
+                                  EssayRenderer (migrate an old-format essay file)
           redrive [--apply]       re-queue items stranded in ENRICHED/DIGESTED
                                   (reports counts only without --apply)
           shortlist [ttl_days]    list picks awaiting composition (default TTL 7)

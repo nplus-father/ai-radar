@@ -48,6 +48,7 @@ class EssayRendererTest {
         assertTrue(md.contains("  - title: \"Goodman & Gilman\""))
         assertTrue(md.contains("    chapter: \"Androgens\""))
         assertTrue(md.contains("    slug: \"goodman-gilman\""))
+        assertTrue(md.contains("    chapter_id: \"goodman-gilman:c1\""))
         // Provenance is frontmatter only — never leaks into the rendered body.
         assertFalse(md.substringAfter("---\n\n").contains("回應新聞"))
         assertFalse(md.substringAfter("---\n\n").contains("本文書目"))

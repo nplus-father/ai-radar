@@ -42,10 +42,13 @@ object EssayRenderer {
                 books.forEach { b ->
                     val title = b["book_title"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: "?"
                     val chapter = b["chapter_title"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                    val chapterId = b["chapter_id"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
                     val slug = bookSlug(b)
                     appendLine("  - title: ${yaml(title)}")
                     if (chapter != null) appendLine("    chapter: ${yaml(chapter)}")
                     if (slug != null) appendLine("    slug: ${yaml(slug)}")
+                    // "<slug>:<content-path>" — the site deep-links to the chapter's deployed page.
+                    if (chapterId != null) appendLine("    chapter_id: ${yaml(chapterId)}")
                 }
             }
             appendLine("---")

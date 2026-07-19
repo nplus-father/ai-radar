@@ -16,6 +16,7 @@ services:
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
       - ./config/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./config/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     # Docker's 1024 default makes RabbitMQ log "Available file handles: 1024.
     # Please consider increasing system limits" on every boot; 65536 is the
     # documented production floor.

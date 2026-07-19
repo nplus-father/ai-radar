@@ -386,6 +386,18 @@ class ItemRepository(private val ds: DataSource) {
         }
     }
 
+    data class DigestSummary(val summaryZh: String, val summaryEn: String)
+
+    /** The digest summaries for one item (one digest per item), or null if undigested. */
+    fun digestForItem(itemId: Long): DigestSummary? = ds.connection.use { c ->
+        c.prepareStatement("SELECT summary_zh, summary_en FROM digests WHERE item_id = ?").use { st ->
+            st.setLong(1, itemId)
+            st.executeQuery().use { rs ->
+                if (rs.next()) DigestSummary(rs.getString(1), rs.getString(2)) else null
+            }
+        }
+    }
+
     data class EssayCandidate(
         val itemId: Long,
         val source: String,

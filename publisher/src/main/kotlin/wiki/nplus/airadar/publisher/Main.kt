@@ -34,9 +34,10 @@ fun main() = wiki.nplus.airadar.common.App.main("publisher") {
     fun publishEssay(itemId: Long) {
         val essay = repo.essayByItem(itemId) ?: error("essay message for item $itemId but no essay row")
         val item = repo.findItem(itemId) ?: error("item $itemId not found")
+        val newsSummary = repo.digestForItem(itemId)?.summaryEn
         val target = contentDir.resolve("essays/${essay.day}.md")
         Files.createDirectories(target.parent)
-        Files.writeString(target, EssayRenderer.render(essay, item))
+        Files.writeString(target, EssayRenderer.render(essay, item, newsSummary))
         repo.recordPublish("ESSAY", target.toString(), null, 1, "SUCCESS")
         log.info("published essay {} (item {}): {}", target, itemId, essay.title)
     }

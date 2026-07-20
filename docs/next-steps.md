@@ -10,22 +10,33 @@ ssh nplus.space "docker exec -i bookshelf-echo-postgres-1 psql -U airadar -d air
 
 ## P0 — VERIFY TONIGHT: the essay path has not produced since 2026-07-17
 
-`content/essays/` holds exactly one file, `2026-07-17.md`. Two nights produced
-nothing, for two *different* reasons, and only the first is fixed:
+`essays` holds exactly one row, 2026-07-17. Both blank nights have the same
+cause, confirmed against prod on 2026-07-20:
 
-- **07-18** — the critic gate (`58942b8`) booked `CRITIC`/`ESSAY_REVISE` into
-  `llm_usage`, purposes no migration ever added. Every run died on the check
-  constraint *after* paying for the pro-tier essay, wrote no `essays` row, and
-  so re-ran on the next five-minute tick until the budget breaker tripped.
-  **Fixed in `8499665`** — the gate is retired for a deterministic quote check
-  (ADR-011), spend is metered in one place, and the daily jobs now cap their
-  attempts. Deployed 2026-07-20 04:58 UTC.
-- **07-19** — prod was simply down. The publisher's hourly snapshot heartbeat
-  stops at 11:27 UTC and does not resume until 07-20 00:05 UTC, a window that
-  contains the 22:00 essay hour, so that night's run almost certainly never
-  happened. **Cause unknown and uninvestigated** — the last successful deploy
-  before it was 07-19 10:20 UTC and the heartbeat survived that by an hour, so
-  "the deploy broke it" does not fit. If it recurs, this is the real P0.
+| day   | ESSAY calls | ESSAY cost | day total | essays row |
+|-------|-------------|-----------|-----------|------------|
+| 07-17 | 1           | $0.0257   | ~$0.10    | yes        |
+| 07-18 | 11          | $0.2364   | $0.31     | none       |
+| 07-19 | 11          | $0.2426   | $0.32     | none       |
+
+The critic gate (`58942b8`) booked `CRITIC`/`ESSAY_REVISE` into `llm_usage`,
+purposes no migration ever added — both have **zero rows**, so those inserts
+never once succeeded. Every run died on the check constraint *after* paying for
+the pro-tier essay, wrote no `essays` row, and so re-ran on the next five-minute
+tick until the daily budget breaker stopped it at ~$0.31. Normal nights cost
+~$0.09; the overspend is ~$0.44 across the two, plus 11 unrecorded critic calls
+a night.
+
+**Fixed in `8499665`** — the gate is retired for a deterministic quote check
+(ADR-011), spend is metered in one place, and the daily jobs cap their attempts.
+Deployed 2026-07-20 04:58 UTC.
+
+Separately and still unexplained: the **publisher** stopped writing its hourly
+snapshot from 07-19 11:27 UTC to 07-20 00:05 UTC. The digester was healthy
+throughout — it made all 11 essay calls that night — so this is a
+publisher-only fault, not a stack outage. Nothing was lost (no essay existed to
+publish) but the cause is unknown. Do not read publisher silence as pipeline
+silence again.
 
 Open items:
 

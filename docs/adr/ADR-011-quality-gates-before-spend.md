@@ -24,9 +24,15 @@ purposes no migration ever added — the CHECK constraint stopped at `JUDGE`. So
 every essay run paid for the pro-tier draft, then died on the constraint before
 `saveEssay`. No `essays` row meant `essayExistsForDay` stayed false, so the
 five-minute tick loop re-ran the whole thing, paying again, until the daily
-budget breaker tripped. Two nights produced no essay while spending a night's
-pro tier each. The critic's own spend was never recorded, so the ledger
-under-reported the real bill.
+budget breaker tripped.
+
+The prod ledger measures it exactly: 07-17, the last healthy night, made **1**
+`ESSAY` call for \$0.0257 and published. 07-18 and 07-19 made **11 each**, for
+\$0.2364 and \$0.2426, and published nothing — each night stopping only when the
+day's total crossed `DAILY_LLM_BUDGET_USD` (0.30 in prod). `CRITIC` and
+`ESSAY_REVISE` have zero rows, so the critic's own calls were billed by the
+provider and never recorded at all: the ledger under-reports the real bill by
+11 cheap-tier calls a night.
 
 **The structural problem, which is the reason for this ADR.** A gate placed
 *after* the expensive call can only add cost. It cannot avoid the spend that

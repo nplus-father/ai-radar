@@ -3,9 +3,19 @@
 # face is the statically built site on GitHub Pages.
 name: bookshelf-echo
 
+# Docker 預設的 json-file 沒有大小上限,log 只會單調成長,永遠不會自己回收。
+# 這台 host 沒有 /etc/docker/daemon.json 且 sudo 需要密碼,全域設不了,
+# 只能逐服務掛 —— 而且要容器重建才生效,單純 restart 不會套用。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   rabbitmq:
     image: rabbitmq:4-management
+    logging: *default-logging
     container_name: bookshelf-echo-rabbitmq
     ports:
       - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
@@ -34,6 +44,7 @@ services:
 
   postgres:
     image: postgres:17
+    logging: *default-logging
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
@@ -51,6 +62,7 @@ services:
 
   flyway:
     image: flyway/flyway:11
+    logging: *default-logging
     command: migrate
     environment:
       FLYWAY_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-airadar}
@@ -74,6 +86,7 @@ services:
   # so they are pinned here rather than inherited from .env.
   producers:
     image: ${BOOKSHELF_ECHO_PRODUCERS_IMAGE:-ghcr.io/nplus-father/bookshelf-echo-producers:latest}
+    logging: *default-logging
     container_name: bookshelf-echo-producers
     env_file: [.env]
     environment: &app-env
@@ -91,6 +104,7 @@ services:
 
   enricher:
     image: ${BOOKSHELF_ECHO_ENRICHER_IMAGE:-ghcr.io/nplus-father/bookshelf-echo-enricher:latest}
+    logging: *default-logging
     container_name: bookshelf-echo-enricher
     env_file: [.env]
     environment: *app-env
@@ -105,6 +119,7 @@ services:
   # (the nplus-infra stack). Outbound HTTP only — zero-inbound holds.
   matcher:
     image: ${BOOKSHELF_ECHO_MATCHER_IMAGE:-ghcr.io/nplus-father/bookshelf-echo-matcher:latest}
+    logging: *default-logging
     container_name: bookshelf-echo-matcher
     env_file: [.env]
     environment: *app-env
@@ -117,6 +132,7 @@ services:
 
   digester:
     image: ${BOOKSHELF_ECHO_DIGESTER_IMAGE:-ghcr.io/nplus-father/bookshelf-echo-digester:latest}
+    logging: *default-logging
     container_name: bookshelf-echo-digester
     env_file: [.env]
     environment: *app-env
@@ -129,6 +145,7 @@ services:
 
   publisher:
     image: ${BOOKSHELF_ECHO_PUBLISHER_IMAGE:-ghcr.io/nplus-father/bookshelf-echo-publisher:latest}
+    logging: *default-logging
     container_name: bookshelf-echo-publisher
     env_file: [.env]
     environment:
@@ -149,6 +166,7 @@ services:
   # (nplus.wiki/bookshelf-echo-site). Keeps the JRE publisher image git-free.
   site-publisher:
     image: alpine/git
+    logging: *default-logging
     # Run as andrew (host uid:gid 1000) so git objects written into the bind-mounted
     # /repo/.git stay host-owned. As root the sidecar produced root:root objects that
     # broke `git fetch`/`rebase` from the host shell (insufficient permission). uid 1000

@@ -186,6 +186,31 @@ services:
       - publisher
     restart: unless-stopped
 
+  # Postgres 指標 —— 這個 DB 裝著 essays、llm_usage、items,是整條 pipeline
+  # 唯一的持久狀態,卻一直沒有任何 exporter。連線數、交易速率、資料庫大小
+  # 都看不到,只有 cAdvisor 的容器層 CPU/記憶體。
+  #
+  # 同時掛兩個網路:postgres 只在本 stack 的 default 網路,而 Prometheus 在
+  # infra-shared-network,這個 exporter 是唯一的橋。
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter
+    container_name: bookshelf-echo-postgres-exporter
+    logging: *default-logging
+    restart: unless-stopped
+    environment:
+      # 刻意不用 DATA_SOURCE_NAME 的單一 URL 形式:密碼含 "/" 之類的字元會讓
+      # URL 解析失敗,而 exporter 的錯誤訊息會把完整 DSN（含密碼）印進 log。
+      # 拆成三個變數就沒有編碼問題,也不會有人需要在 compose 裡手動 urlencode。
+      DATA_SOURCE_URI: "postgres:5432/${POSTGRES_DB:-airadar}?sslmode=disable"
+      DATA_SOURCE_USER: "${POSTGRES_USER:-airadar}"
+      DATA_SOURCE_PASS: "${POSTGRES_PASSWORD:?set in .env}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - default
+      - infra-shared
+
 volumes:
   rabbitmq-data:
   pg-data:

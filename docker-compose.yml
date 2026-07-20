@@ -149,12 +149,19 @@ services:
   # (nplus.wiki/bookshelf-echo-site). Keeps the JRE publisher image git-free.
   site-publisher:
     image: alpine/git
+    # Run as andrew (host uid:gid 1000) so git objects written into the bind-mounted
+    # /repo/.git stay host-owned. As root the sidecar produced root:root objects that
+    # broke `git fetch`/`rebase` from the host shell (insufficient permission). uid 1000
+    # has no /etc/passwd entry in alpine/git, so HOME must point at a writable dir or
+    # `git config --global` (below) can't write ~/.gitconfig.
+    user: "1000:1000"
     entrypoint: ["/bin/sh", "/scripts/site-publish.sh"]
     volumes:
       - ./out/content:/src:ro
       - ../bookshelf-echo-site:/repo
       - ./config/site-publish.sh:/scripts/site-publish.sh:ro
     environment:
+      HOME: /tmp
       SITE_GIT_TOKEN: ${SITE_GIT_TOKEN:?set in .env}
       SYNC_INTERVAL_SECONDS: "300"
     depends_on:

@@ -24,23 +24,23 @@ fun main() = wiki.nplus.airadar.common.App.main("digester") {
     val connection = Rabbit.connect("digester")
     val channel = connection.createChannel()
     Rabbit.declareTopology(channel)
-    val inputTokens = registry.counter("airadar_llm_tokens_total", "type", "input")
-    val outputTokens = registry.counter("airadar_llm_tokens_total", "type", "output")
-    val cost = registry.counter("airadar_llm_cost_usd_total")
+    // Every LLM call in the pipeline books its spend through here, so the
+    // ledger and the Prometheus counters can never disagree (see UsageMeter).
+    val usage = UsageMeter(repo, registry)
 
     // Daily jobs (ADR-009) run in THIS process: the budget check below has no
     // DB-level guard, so a second LLM-spending process would race it. Both are
     // tick loops, not consumers — their unit of work is "the day's candidate
     // set", which no per-item queue message can represent.
-    val curator = CuratorJob(repo, LlmClient.selectorFromEnv(http), registry)
+    val curator = CuratorJob(repo, LlmClient.selectorFromEnv(http), registry, usage)
     val essayist = EssayistJob(
         repo,
         LlmClient.essayistFromEnv(http),
         LlmClient.judgeFromEnv(http),
-        LlmClient.criticFromEnv(http),
         wiki.nplus.airadar.common.LibraryClient.fromEnv(http),
         connection.createChannel(),
         registry,
+        usage,
     )
     val curatorTickMinutes = Config.int("CURATOR_TICK_MINUTES", 5)
     kotlin.concurrent.thread(isDaemon = true, name = "curator") {
@@ -98,11 +98,7 @@ fun main() = wiki.nplus.airadar.common.App.main("digester") {
 
         val digest = llm.digest(item.source, item.title, item.url, item.extractedText)
         repo.saveDigest(itemId, digest)
-        val usd = llm.cost(digest.inputTokens, digest.outputTokens)
-        repo.recordUsage(itemId, "DIGEST", digest.model, digest.inputTokens, digest.outputTokens, usd)
-        inputTokens.increment(digest.inputTokens.toDouble())
-        outputTokens.increment(digest.outputTokens.toDouble())
-        cost.increment(usd)
+        usage.record(itemId, "DIGEST", llm, digest.inputTokens, digest.outputTokens)
         if (repo.transition(itemId, ItemState.MATCHED, ItemState.DIGESTED)) {
             Rabbit.publish(channel, "", RabbitTopology.PUBLISH_QUEUE, StageMessage(itemId).encode())
             log.info("digested item {} (score {}): {}", itemId, digest.significanceScore, item.title)

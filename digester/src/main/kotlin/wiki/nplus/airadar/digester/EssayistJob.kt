@@ -8,7 +8,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.slf4j.LoggerFactory
 import wiki.nplus.airadar.common.Config
-import wiki.nplus.airadar.common.EssayFeedback
 import wiki.nplus.airadar.common.ItemRepository
 import wiki.nplus.airadar.common.LibraryClient
 import wiki.nplus.airadar.common.Rabbit
@@ -25,10 +24,10 @@ import java.time.ZoneOffset
  * the news — at most ESSAY_JUDGE_MAX_CANDIDATES verdicts per day. The first
  * survivor gets its top chapters pulled in full and ESSAY_MODEL writes the
  * book-informed commentary (one essay attempt per day); the essay model may
- * still refuse (skip). Every draft then faces the cheap-tier critic; a fail
- * earns one revision with the critique fed back, a second fail forfeits the
- * day. Rejected and skipped picks are consumed so the same dead pairing is
- * not retried tomorrow. Days without an essay are a legal outcome (寧缺勿濫).
+ * still refuse (skip). Every draft's quotes are then checked against the source
+ * text ([QuoteVerifier]) before it can publish. Rejected and skipped picks are
+ * consumed so the same dead pairing is not retried tomorrow. Days without an
+ * essay are a legal outcome (寧缺勿濫).
  *
  * Runs in the digester process for the same reason as the curator (ADR-009):
  * one process spends all LLM money.
@@ -37,10 +36,10 @@ class EssayistJob(
     private val repo: ItemRepository,
     private val essayist: LlmClient,
     private val judge: LlmClient,
-    private val critic: LlmClient,
     private val library: LibraryClient,
     private val channel: Channel,
     private val registry: MeterRegistry,
+    private val usage: UsageMeter,
 ) {
     private val log = LoggerFactory.getLogger(EssayistJob::class.java)
     private val essayHourUtc = Config.int("ESSAY_HOUR_UTC", 22)
@@ -48,6 +47,7 @@ class EssayistJob(
     private val maxChapters = Config.int("ESSAY_MAX_CHAPTERS", 2)
     private val maxJudged = Config.int("ESSAY_JUDGE_MAX_CANDIDATES", 3)
     private val dailyBudgetUsd = Config.double("DAILY_LLM_BUDGET_USD", 0.50)
+    private val attempts = DailyAttemptGuard(Config.int("DAILY_JOB_MAX_ATTEMPTS", 3))
     private fun outcome(name: String) = registry.counter("airadar_essay_runs_total", "outcome", name)
 
     fun runIfDue(now: Instant) {
@@ -69,6 +69,15 @@ class EssayistJob(
             return
         }
 
+        // Everything below spends, and nothing below is recorded as "the day is
+        // done" until the very end — so a failure in between comes straight back
+        // on the next tick and pays again. Cap how often that can happen.
+        if (!attempts.tryConsume(day)) {
+            outcome("attempts_exhausted").increment()
+            log.error("essay {}: attempts exhausted, standing down until tomorrow (or a restart)", day)
+            return
+        }
+
         // The relevance judge (cheap tier) runs BEFORE the essay: vector
         // distance measures library density, not relatedness (2026-07-16 live
         // calibration), so a keyword coincidence must be caught here — an
@@ -76,7 +85,7 @@ class EssayistJob(
         // picks are consumed so the same dead pairing is not retried tomorrow.
         val candidate = candidates.take(maxJudged).firstOrNull { c ->
             val verdict = judge.judge(c)
-            repo.recordUsage(c.itemId, "JUDGE", verdict.model, verdict.inputTokens, verdict.outputTokens, judge.cost(verdict.inputTokens, verdict.outputTokens))
+            usage.record(c.itemId, "JUDGE", judge, verdict.inputTokens, verdict.outputTokens)
             if (!verdict.related) {
                 repo.markComposed(c.itemId)
                 outcome("judge_rejected").increment()
@@ -90,8 +99,8 @@ class EssayistJob(
         }
 
         val chapters = topChapters(candidate.passagesJson)
-        var result = essayist.essay(candidate, chapters)
-        repo.recordUsage(candidate.itemId, "ESSAY", result.model, result.inputTokens, result.outputTokens, essayist.cost(result.inputTokens, result.outputTokens))
+        val result = essayist.essay(candidate, chapters)
+        usage.record(candidate.itemId, "ESSAY", essayist, result.inputTokens, result.outputTokens)
 
         if (result.skip) {
             // Consume the pick: retrying the same pairing tomorrow would burn
@@ -102,40 +111,31 @@ class EssayistJob(
             return
         }
 
-        // Critic gate: every draft is reviewed before publishing; a fail earns
-        // exactly one revision round (the critique goes back verbatim), a
-        // second fail forfeits the day. The failure mode this catches is a
-        // draft that is fluent but hollow — summary sandwich, fake quotes,
-        // forced pairing — which the essayist's own honesty clause misses
-        // because it judges the pairing, not its own prose.
-        val verdict = critic.critique(candidate, chapters, result.essayMd ?: error("essay without body for item ${candidate.itemId}"))
-        repo.recordUsage(candidate.itemId, "CRITIC", verdict.model, verdict.inputTokens, verdict.outputTokens, critic.cost(verdict.inputTokens, verdict.outputTokens))
-        if (!verdict.pass) {
-            log.info("essay {}: critic rejected draft for item {} ({}): {}", day, candidate.itemId, candidate.title, verdict.critique)
-            val revised = essayist.essay(candidate, chapters, EssayFeedback(result.essayMd!!, verdict.critique))
-            repo.recordUsage(candidate.itemId, "ESSAY_REVISE", revised.model, revised.inputTokens, revised.outputTokens, essayist.cost(revised.inputTokens, revised.outputTokens))
-            if (revised.skip) {
-                repo.markComposed(candidate.itemId)
-                outcome("skipped").increment()
-                log.info("essay {}: model declined on revision for item {} ({}): {}", day, candidate.itemId, candidate.title, revised.skipReason)
-                return
-            }
-            val second = critic.critique(candidate, chapters, revised.essayMd ?: error("revised essay without body for item ${candidate.itemId}"))
-            repo.recordUsage(candidate.itemId, "CRITIC", second.model, second.inputTokens, second.outputTokens, critic.cost(second.inputTokens, second.outputTokens))
-            if (!second.pass) {
-                repo.markComposed(candidate.itemId)
-                outcome("critic_rejected").increment()
-                log.info("essay {}: revision still rejected for item {} ({}) — no essay today (寧缺勿濫): {}", day, candidate.itemId, candidate.title, second.critique)
-                return
-            }
-            result = revised
+        // Quote gate: the essay prompt requires book quotes to be blockquotes
+        // precisely so this check can be a string comparison instead of another
+        // model. A fabricated quote is the one flaw the author model cannot
+        // catch in itself and the one a reader would never forgive; everything
+        // else about draft quality the prompt and the skip clause already own.
+        // Forfeit the day rather than rewrite: the pick is consumed so tomorrow
+        // starts on a different pairing instead of re-buying this one.
+        val essayMd = result.essayMd ?: error("essay without body for item ${candidate.itemId}")
+        val quotes = QuoteVerifier.verify(essayMd, quoteSources(candidate, chapters))
+        if (!quotes.ok) {
+            repo.markComposed(candidate.itemId)
+            outcome("unverified_quotes").increment()
+            log.warn(
+                "essay {}: {} quote(s) not found in the source material for item {} ({}) — no essay today (寧缺勿濫): {}",
+                day, quotes.unverified.size, candidate.itemId, candidate.title,
+                quotes.unverified.joinToString(" | ") { it.take(40) },
+            )
+            return
         }
 
         repo.saveEssay(
             day = day,
             itemId = candidate.itemId,
             title = result.titleZh ?: candidate.title,
-            essayMd = result.essayMd ?: error("essay without body for item ${candidate.itemId}"),
+            essayMd = essayMd,
             booksJson = result.booksJson,
             model = result.model,
         )
@@ -144,6 +144,17 @@ class EssayistJob(
         outcome("composed").increment()
         log.info("essay {}: composed from item {} ({}), {} book(s)", day, candidate.itemId, candidate.title, Json.parseToJsonElement(result.booksJson).jsonArray.size)
     }
+
+    /**
+     * Everything the essayist was allowed to quote from: the chapters it got in
+     * full, the retrieved passages, and the news article itself (an essay quotes
+     * the news it responds to as legitimately as it quotes a book).
+     */
+    private fun quoteSources(
+        candidate: ItemRepository.EssayCandidate,
+        chapters: List<LlmClient.ChapterExcerpt>,
+    ): List<String> = chapters.map { it.content } +
+        listOfNotNull(candidate.passagesJson, candidate.extractedText, candidate.title)
 
     /** Fetch full text for the strongest distinct chapters among the match passages. */
     private fun topChapters(passagesJson: String): List<LlmClient.ChapterExcerpt> =

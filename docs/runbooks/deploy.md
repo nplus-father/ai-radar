@@ -71,6 +71,14 @@ and `bookshelf-echo-rabbitmq:15692` over `infra-shared-network`; the **Bookshelf
 Pipeline** Grafana dashboard shows queue depth, digest rate, LLM cost and DLQ.
 All containers are visible in Portainer.
 
+`airadar_llm_cost_usd_total` and `airadar_llm_tokens_total` carry `purpose`
+(DIGEST/SELECT/JUDGE/ESSAY) and `model` labels, and cover every tier rather than
+the digest path alone. The existing cost panels already aggregate with `sum()`,
+so they keep working unchanged — but they now include the pro-tier SELECT and
+ESSAY spend that used to be invisible. **A jump on those panels right after this
+deploy is the old blind spot becoming visible, not new spend.** `sum by
+(purpose)` is what answers "where did the money go".
+
 The ops CLI runs from the host against the published 127.0.0.1 ports:
 
 ```bash

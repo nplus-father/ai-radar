@@ -28,12 +28,14 @@ class CuratorJob(
     private val repo: ItemRepository,
     private val selector: LlmClient,
     private val registry: MeterRegistry,
+    private val usage: UsageMeter,
 ) {
     private val log = LoggerFactory.getLogger(CuratorJob::class.java)
     private val selectHourUtc = Config.int("SELECT_HOUR_UTC", 21)
     private val maxPicks = Config.int("SHORTLIST_MAX_PER_DAY", 3)
     private val minScore = Config.int("SELECT_MIN_SCORE", 3)
     private val dailyBudgetUsd = Config.double("DAILY_LLM_BUDGET_USD", 0.50)
+    private val attempts = DailyAttemptGuard(Config.int("DAILY_JOB_MAX_ATTEMPTS", 3))
     private fun outcome(name: String) = registry.counter("airadar_selection_runs_total", "outcome", name)
 
     fun runIfDue(now: Instant) {
@@ -63,11 +65,19 @@ class CuratorJob(
             return
         }
 
+        // The crash window above is bounded by attempts, not by luck: the tick
+        // loop would otherwise re-run a deterministic failure — and re-buy the
+        // pro-tier selection — every CURATOR_TICK_MINUTES until midnight.
+        if (!attempts.tryConsume(day)) {
+            outcome("attempts_exhausted").increment()
+            log.error("selection {}: attempts exhausted, standing down until tomorrow (or a restart)", day)
+            return
+        }
+
         val result = selector.select(candidates, maxPicks)
         val picks = validatePicks(result, candidates, maxPicks)
         picks.forEach { repo.saveShortlistPick(it.itemId, it.reason, result.model) }
-        val usd = selector.cost(result.inputTokens, result.outputTokens)
-        repo.recordUsage(null, "SELECT", result.model, result.inputTokens, result.outputTokens, usd)
+        usage.record(null, "SELECT", selector, result.inputTokens, result.outputTokens)
         repo.recordSelectionRun(day, result.model, candidates.size, picks.size)
         outcome("picked").increment()
         log.info(

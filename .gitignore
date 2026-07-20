@@ -1,6 +1,8 @@
 .gradle/
 build/
-.env
+# *.env 而非只有 .env:任何 <name>.env 都可能裝機密。
+*.env
+!*.env.example
 .idea/
 *.iml
 local.properties

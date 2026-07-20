@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Lives in `common` so all five apps share it — logback takes the first
+  logback.xml on the classpath, and common is on every app's.
+
+  Until this file existed there was no configuration at all, so logback fell
+  back to its default: root at DEBUG. Prod logs were HikariCP pool statistics
+  every 30 seconds and essentially nothing else — `docker logs` could not
+  answer "did the essayist run last night?" because the answer was buried.
+
+  Timestamps are UTC with the date. The container clock is Asia/Taipei, but
+  every business rule here is keyed on the UTC day (SELECT_HOUR_UTC,
+  ESSAY_HOUR_UTC, essays.day, the daily budget window), so local time without a
+  date made log lines hard to line up against the tables they describe.
+-->
+<configuration>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSS'Z', UTC} %-5level %logger{28} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Infrastructure chatter. Their warnings still matter; their heartbeats do not. -->
+  <logger name="com.zaxxer.hikari" level="WARN"/>
+  <logger name="com.rabbitmq" level="WARN"/>
+  <logger name="org.postgresql" level="WARN"/>
+  <logger name="org.flywaydb" level="INFO"/>
+
+  <!-- LOG_LEVEL=DEBUG on the host turns the detail back on without a rebuild. -->
+  <root level="${LOG_LEVEL:-INFO}">
+    <appender-ref ref="STDOUT"/>
+  </root>
+</configuration>

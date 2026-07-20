@@ -71,6 +71,18 @@ and `bookshelf-echo-rabbitmq:15692` over `infra-shared-network`; the **Bookshelf
 Pipeline** Grafana dashboard shows queue depth, digest rate, LLM cost and DLQ.
 All containers are visible in Portainer.
 
+Logging is configured in `common/src/main/resources/logback.xml` (shared by all
+five apps — logback takes the first config on the classpath). Root is INFO with
+UTC, dated timestamps; HikariCP, the AMQP client and the JDBC driver are muted
+to WARN. Set `LOG_LEVEL=DEBUG` in the host `.env` and restart the one container
+to get the detail back without a rebuild. Before this config existed logback
+defaulted to root=DEBUG and `docker logs` was pool statistics every 30 seconds,
+so grepping for an application line was hopeless.
+
+`airadar_llm_latency_seconds` times every LLM call, tagged `purpose`, `model`
+and `outcome` (ok/error). At one ESSAY call a day, use a 24h window — shorter
+ranges are mostly empty.
+
 `airadar_llm_cost_usd_total` and `airadar_llm_tokens_total` carry `purpose`
 (DIGEST/SELECT/JUDGE/ESSAY) and `model` labels, and cover every tier rather than
 the digest path alone. The existing cost panels already aggregate with `sum()`,

@@ -641,13 +641,25 @@ class ItemRepository(private val ds: DataSource) {
     )
 }
 
+/**
+ * What every LLM call returns whatever it was asked for: which model answered,
+ * and what it cost. The digester's UsageMeter keys on this, so a call cannot be
+ * timed but not billed, or billed on one path and forgotten on another — which
+ * is exactly how the pro-tier spend stayed off the dashboard until 2026-07-20.
+ */
+interface LlmCallResult {
+    val model: String
+    val inputTokens: Int
+    val outputTokens: Int
+}
+
 /** Structured output of the LLM selection step (curator), provider-agnostic. */
 data class SelectResult(
     val picks: List<Pick>,
-    val model: String,
-    val inputTokens: Int,
-    val outputTokens: Int,
-) {
+    override val model: String,
+    override val inputTokens: Int,
+    override val outputTokens: Int,
+) : LlmCallResult {
     data class Pick(val itemId: Long, val reason: String)
 }
 
@@ -655,10 +667,10 @@ data class SelectResult(
 data class JudgeResult(
     val related: Boolean,
     val reason: String,
-    val model: String,
-    val inputTokens: Int,
-    val outputTokens: Int,
-)
+    override val model: String,
+    override val inputTokens: Int,
+    override val outputTokens: Int,
+) : LlmCallResult
 
 /** Structured output of the LLM essay step (essayist), provider-agnostic. */
 data class EssayResult(
@@ -668,10 +680,10 @@ data class EssayResult(
     val titleZh: String?,
     val essayMd: String?,
     val booksJson: String,
-    val model: String,
-    val inputTokens: Int,
-    val outputTokens: Int,
-)
+    override val model: String,
+    override val inputTokens: Int,
+    override val outputTokens: Int,
+) : LlmCallResult
 
 /** Structured output of the LLM digest step, provider-agnostic. */
 data class DigestResult(
@@ -680,7 +692,7 @@ data class DigestResult(
     val tagsJson: String,
     val significanceScore: Int,
     val category: String,
-    val model: String,
-    val inputTokens: Int,
-    val outputTokens: Int,
-)
+    override val model: String,
+    override val inputTokens: Int,
+    override val outputTokens: Int,
+) : LlmCallResult

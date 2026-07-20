@@ -84,8 +84,7 @@ class EssayistJob(
         // essay built on a fake pairing would be published. Judged-unrelated
         // picks are consumed so the same dead pairing is not retried tomorrow.
         val candidate = candidates.take(maxJudged).firstOrNull { c ->
-            val verdict = judge.judge(c)
-            usage.record(c.itemId, "JUDGE", judge, verdict.inputTokens, verdict.outputTokens)
+            val verdict = usage.call(c.itemId, "JUDGE", judge) { judge.judge(c) }
             if (!verdict.related) {
                 repo.markComposed(c.itemId)
                 outcome("judge_rejected").increment()
@@ -99,8 +98,7 @@ class EssayistJob(
         }
 
         val chapters = topChapters(candidate.passagesJson)
-        val result = essayist.essay(candidate, chapters)
-        usage.record(candidate.itemId, "ESSAY", essayist, result.inputTokens, result.outputTokens)
+        val result = usage.call(candidate.itemId, "ESSAY", essayist) { essayist.essay(candidate, chapters) }
 
         if (result.skip) {
             // Consume the pick: retrying the same pairing tomorrow would burn

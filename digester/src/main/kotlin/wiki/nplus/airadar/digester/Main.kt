@@ -96,9 +96,8 @@ fun main() = wiki.nplus.airadar.common.App.main("digester") {
             throw BudgetExhausted("spent $%.4f of $%.2f today".format(spent, dailyBudgetUsd))
         }
 
-        val digest = llm.digest(item.source, item.title, item.url, item.extractedText)
+        val digest = usage.call(itemId, "DIGEST", llm) { llm.digest(item.source, item.title, item.url, item.extractedText) }
         repo.saveDigest(itemId, digest)
-        usage.record(itemId, "DIGEST", llm, digest.inputTokens, digest.outputTokens)
         if (repo.transition(itemId, ItemState.MATCHED, ItemState.DIGESTED)) {
             Rabbit.publish(channel, "", RabbitTopology.PUBLISH_QUEUE, StageMessage(itemId).encode())
             log.info("digested item {} (score {}): {}", itemId, digest.significanceScore, item.title)

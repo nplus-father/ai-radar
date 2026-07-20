@@ -74,10 +74,9 @@ class CuratorJob(
             return
         }
 
-        val result = selector.select(candidates, maxPicks)
+        val result = usage.call(null, "SELECT", selector) { selector.select(candidates, maxPicks) }
         val picks = validatePicks(result, candidates, maxPicks)
         picks.forEach { repo.saveShortlistPick(it.itemId, it.reason, result.model) }
-        usage.record(null, "SELECT", selector, result.inputTokens, result.outputTokens)
         repo.recordSelectionRun(day, result.model, candidates.size, picks.size)
         outcome("picked").increment()
         log.info(

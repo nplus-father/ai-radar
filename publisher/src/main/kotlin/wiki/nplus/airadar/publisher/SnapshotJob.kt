@@ -32,6 +32,19 @@ class SnapshotJob(private val repo: ItemRepository, private val contentDir: Path
     // at the `rabbitmq` service, not at this process's own loopback.
     private val mgmtHost = Config.str("RABBITMQ_HOST", "127.0.0.1")
     private val mgmtPort = Config.int("RABBITMQ_MGMT_PORT", 15672)
+
+    /**
+     * Must match `management.path_prefix` in config/rabbitmq/rabbitmq.conf.
+     *
+     * That prefix exists so nplus-infra's nginx can mount the management UI
+     * under /rabbitmq/ — but it moves the HTTP API too, so `/api/queues`
+     * becomes `/rabbitmq/api/queues`. This client kept asking for the
+     * un-prefixed path and had been getting 404 on every interval since:
+     * the catch below swallows it into a WARN, the snapshot still writes,
+     * and the dashboard renders empty queue panels. Nothing ever turned red.
+     */
+    private val mgmtPrefix = Config.str("RABBITMQ_MGMT_PATH_PREFIX", "/rabbitmq").trimEnd('/')
+
     private val auth = Base64.getEncoder().encodeToString(
         "${Config.str("RABBITMQ_USER", "airadar")}:${Config.str("RABBITMQ_PASSWORD")}".toByteArray(),
     )
@@ -56,9 +69,8 @@ class SnapshotJob(private val repo: ItemRepository, private val contentDir: Path
     }
 
     private fun queueStats() = try {
-        val request = HttpRequest.newBuilder(
-            URI.create("http://$mgmtHost:$mgmtPort/api/queues?columns=name,messages,messages_ready,messages_unacknowledged,consumers"),
-        ).header("Authorization", "Basic $auth").GET().build()
+        val request = HttpRequest.newBuilder(queuesUri(mgmtHost, mgmtPort, mgmtPrefix))
+            .header("Authorization", "Basic $auth").GET().build()
         val response = http.send(request, HttpResponse.BodyHandlers.ofString())
         check(response.statusCode() == 200) { "management API returned ${response.statusCode()}" }
         Json.parseToJsonElement(response.body()).jsonArray.toList()
@@ -68,6 +80,16 @@ class SnapshotJob(private val repo: ItemRepository, private val contentDir: Path
     }
 
     companion object {
+        /**
+         * Kept pure and separate from the sending for the same reason [render]
+         * is: the prefix bug below was invisible at runtime (404 → WARN →
+         * empty panels), so the guard has to be a test, not a log line.
+         */
+        fun queuesUri(host: String, port: Int, prefix: String): URI = URI.create(
+            "http://$host:$port${prefix.trimEnd('/')}" +
+                "/api/queues?columns=name,messages,messages_ready,messages_unacknowledged,consumers",
+        )
+
         /**
          * The snapshot's shape, kept pure and separate from the gathering so a
          * test can assert it without a database. These key names are a

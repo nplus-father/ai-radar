@@ -96,5 +96,36 @@ class SnapshotJobTest {
         assertEquals(0, snap["llmTodayByPurpose"]!!.jsonArray.size)
     }
 
+    /**
+     * config/rabbitmq/rabbitmq.conf sets `management.path_prefix = /rabbitmq`
+     * so nplus-infra's nginx can mount the UI under /rabbitmq/. That moves the
+     * HTTP API too. This client asked for the un-prefixed path and got 404 on
+     * every interval — swallowed into a WARN, the snapshot still written, the
+     * queue panels silently empty. The prefix belongs in the URL, and the only
+     * thing that can notice it going missing again is a test.
+     */
+    @Test
+    fun `queue stats url carries the management path prefix`() {
+        assertEquals(
+            "/rabbitmq/api/queues",
+            SnapshotJob.queuesUri("rabbitmq", 15672, "/rabbitmq").path,
+        )
+    }
+
+    @Test
+    fun `a trailing slash in the prefix does not double up`() {
+        assertEquals(
+            "/rabbitmq/api/queues",
+            SnapshotJob.queuesUri("rabbitmq", 15672, "/rabbitmq/").path,
+        )
+    }
+
+    @Test
+    fun `an empty prefix still yields the plain api path`() {
+        // A broker without path_prefix is a valid deployment; only the default
+        // has to stay in sync with rabbitmq.conf.
+        assertEquals("/api/queues", SnapshotJob.queuesUri("rabbitmq", 15672, "").path)
+    }
+
     private fun kotlinx.serialization.json.JsonPrimitive.int() = content.toInt()
 }

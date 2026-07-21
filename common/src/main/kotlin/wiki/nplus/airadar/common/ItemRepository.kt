@@ -297,6 +297,51 @@ class ItemRepository(private val ds: DataSource) {
         }
     }
 
+    /** One (purpose, model) pair of today's bill. */
+    data class LlmTodayRow(
+        val purpose: String,
+        val model: String,
+        val costUsd: Double,
+        val inputTokens: Long,
+        val outputTokens: Long,
+        val calls: Int,
+    )
+
+    /**
+     * Today's spend broken down by what the money bought and which model bought
+     * it. [llmToday]'s total answers "are we near the breaker"; this answers
+     * "which tier moved the number" — the pro-tier ESSAY call and the hundreds
+     * of cheap DIGESTs are indistinguishable in a sum. Same breakdown the
+     * Grafana panel gets from the `purpose`/`model` counter labels, so the
+     * dashboard and the metrics tell the same story.
+     */
+    fun llmTodayByPurpose(): List<LlmTodayRow> = ds.connection.use { c ->
+        c.prepareStatement(
+            """
+            SELECT purpose, model,
+                   COALESCE(SUM(cost_usd), 0), COALESCE(SUM(input_tokens), 0),
+                   COALESCE(SUM(output_tokens), 0), COUNT(*)
+            FROM llm_usage
+            WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'
+            GROUP BY purpose, model
+            ORDER BY 3 DESC, 1
+            """.trimIndent(),
+        ).use { st ->
+            st.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(
+                            LlmTodayRow(
+                                rs.getString(1), rs.getString(2), rs.getDouble(3),
+                                rs.getLong(4), rs.getLong(5), rs.getInt(6),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     fun receivedLast24h(): Int = ds.connection.use { c ->
         c.prepareStatement("SELECT count(*) FROM items WHERE received_at >= now() - interval '24 hours'").use { st ->
             st.executeQuery().use { rs ->

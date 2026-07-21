@@ -1,6 +1,8 @@
 package wiki.nplus.airadar.publisher
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.put
@@ -35,39 +37,15 @@ class SnapshotJob(private val repo: ItemRepository, private val contentDir: Path
     )
 
     fun capture(now: Instant): String {
-        val llm = repo.llmToday()
-        val snapshot = buildJsonObject {
-            put("capturedAt", now.toString())
-            putJsonArray("queues") {
-                queueStats().forEach { add(it) }
-            }
-            putJsonObject("items") {
-                repo.stateCounts().forEach { (state, count) -> put(state, count) }
-            }
-            putJsonObject("llmToday") {
-                put("costUsd", llm.costUsd)
-                put("inputTokens", llm.inputTokens)
-                put("outputTokens", llm.outputTokens)
-                put("calls", llm.calls)
-            }
-            // The digester's gates, echoed so a reader of the snapshot can tell
-            // "spent $0.12" from "spent $0.12 of $0.50" — a spend figure without
-            // its limit says nothing about whether the breaker is close to
-            // tripping. Same env vars the digester reads (compose gives every
-            // app the same .env); reporting only, never enforcement.
-            putJsonObject("limits") {
-                put("dailyBudgetUsd", Config.double("DAILY_LLM_BUDGET_USD", 0.50))
-                put("dailyDigestLimit", Config.int("DAILY_DIGEST_LIMIT", 10))
-                put("shortlistMaxPerDay", Config.int("SHORTLIST_MAX_PER_DAY", 3))
-                put("matchNoResonanceDistance", Config.double("MATCH_NO_RESONANCE_DISTANCE", 1.10))
-            }
-            // The selection funnel's live pool (ADR-009): picks awaiting a
-            // composition, within TTL.
-            putJsonObject("shortlist") {
-                put("pendingCount", repo.shortlistPending(Config.int("SHORTLIST_TTL_DAYS", 7)).size)
-            }
-            put("receivedLast24h", repo.receivedLast24h())
-        }.toString()
+        val snapshot = render(
+            now = now,
+            queues = queueStats(),
+            items = repo.stateCounts(),
+            llm = repo.llmToday(),
+            byPurpose = repo.llmTodayByPurpose(),
+            shortlistPending = repo.shortlistPending(Config.int("SHORTLIST_TTL_DAYS", 7)).size,
+            receivedLast24h = repo.receivedLast24h(),
+        )
 
         repo.saveSnapshot(snapshot)
         val dir = contentDir.resolve("data/metrics")
@@ -87,5 +65,79 @@ class SnapshotJob(private val repo: ItemRepository, private val contentDir: Path
     } catch (e: Exception) {
         log.warn("queue stats unavailable: {}", e.toString())
         emptyList()
+    }
+
+    companion object {
+        /**
+         * The snapshot's shape, kept pure and separate from the gathering so a
+         * test can assert it without a database. These key names are a
+         * cross-repo contract: the bookshelf-echo-site dashboard reads them and
+         * degrades silently on a field it does not recognise, so a rename here
+         * would otherwise ship green on both sides and surface only as a panel
+         * quietly missing from the page.
+         */
+        fun render(
+            now: Instant,
+            queues: List<JsonElement>,
+            items: Map<String, Int>,
+            llm: ItemRepository.LlmToday,
+            byPurpose: List<ItemRepository.LlmTodayRow>,
+            shortlistPending: Int,
+            receivedLast24h: Int,
+        ): String = buildJsonObject {
+            put("capturedAt", now.toString())
+            // How often this file is supposed to be rewritten. Without it a
+            // reader cannot tell a fresh snapshot from a stale one — the
+            // publisher went silent for 12 hours on 2026-07-19 and the
+            // dashboard looked exactly as healthy as ever. The cadence is the
+            // publisher's own, so it publishes it rather than making the site
+            // hardcode a guess.
+            put("snapshotIntervalMinutes", Config.int("SNAPSHOT_INTERVAL_MINUTES", 60))
+            putJsonArray("queues") {
+                queues.forEach { add(it) }
+            }
+            putJsonObject("items") {
+                items.forEach { (state, count) -> put(state, count) }
+            }
+            putJsonObject("llmToday") {
+                put("costUsd", llm.costUsd)
+                put("inputTokens", llm.inputTokens)
+                put("outputTokens", llm.outputTokens)
+                put("calls", llm.calls)
+            }
+            // The same bill, itemised: which purpose and which model spent it.
+            // A single total cannot distinguish "the essay tier ran" from "a
+            // digest storm", and it never names the service doing the work —
+            // the dashboard reads this to show both.
+            putJsonArray("llmTodayByPurpose") {
+                byPurpose.forEach { row ->
+                    addJsonObject {
+                        put("purpose", row.purpose)
+                        put("model", row.model)
+                        put("costUsd", row.costUsd)
+                        put("inputTokens", row.inputTokens)
+                        put("outputTokens", row.outputTokens)
+                        put("calls", row.calls)
+                    }
+                }
+            }
+            // The digester's gates, echoed so a reader of the snapshot can tell
+            // "spent $0.12" from "spent $0.12 of $0.50" — a spend figure without
+            // its limit says nothing about whether the breaker is close to
+            // tripping. Same env vars the digester reads (compose gives every
+            // app the same .env); reporting only, never enforcement.
+            putJsonObject("limits") {
+                put("dailyBudgetUsd", Config.double("DAILY_LLM_BUDGET_USD", 0.50))
+                put("dailyDigestLimit", Config.int("DAILY_DIGEST_LIMIT", 10))
+                put("shortlistMaxPerDay", Config.int("SHORTLIST_MAX_PER_DAY", 3))
+                put("matchNoResonanceDistance", Config.double("MATCH_NO_RESONANCE_DISTANCE", 1.10))
+            }
+            // The selection funnel's live pool (ADR-009): picks awaiting a
+            // composition, within TTL.
+            putJsonObject("shortlist") {
+                put("pendingCount", shortlistPending)
+            }
+            put("receivedLast24h", receivedLast24h)
+        }.toString()
     }
 }

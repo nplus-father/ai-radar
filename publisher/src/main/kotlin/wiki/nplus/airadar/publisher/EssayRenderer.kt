@@ -32,6 +32,11 @@ object EssayRenderer {
             appendLine("title: ${yaml(essay.title)}")
             appendLine("date: ${essay.day}")
             appendLine("kind: essay")
+            // The model that actually wrote this piece, recorded per essay
+            // rather than as a site-wide footnote: the essay tier is a config
+            // value and older essays were written by whatever it was then. A
+            // reader is owed the specific name, not "AI".
+            appendLine("model: ${yaml(essay.model)}")
             appendLine("news:")
             appendLine("  title: ${yaml(item.title)}")
             appendLine("  url: ${yaml(item.url)}")

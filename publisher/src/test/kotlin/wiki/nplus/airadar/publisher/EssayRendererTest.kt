@@ -41,6 +41,8 @@ class EssayRendererTest {
             item(),
             newsSummary = "The Pentagon will screen troops over 30.",
         )
+        // The reader is told which model wrote it, not just "AI".
+        assertTrue(md.contains("model: \"gemini-2.5-pro\""))
         assertTrue(md.contains("news:"))
         assertTrue(md.contains("  url: \"https://example.com/a?x=1&y=2\""))
         assertTrue(md.contains("  source: \"news\""))

@@ -27,12 +27,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Jib builds one image per app module and pushes:
-      #   ghcr.io/nplus-father/bookshelf-echo-{producers,enricher,matcher,digester,publisher}
-      - name: Build & push all images with Jib
+      # The `jib` task graph is compile → jar → push: it never runs a test. So
+      # without this step a red suite deployed to prod unnoticed, and the tests
+      # only ever ran on whichever laptop remembered to run them.
+      - name: Build & test
         run: |
           chmod +x gradlew
-          ./gradlew jib
+          ./gradlew build
+
+      # Jib builds one image per app module and pushes:
+      #   ghcr.io/nplus-father/bookshelf-echo-{producers,enricher,matcher,digester,publisher}
+      - name: Push all images with Jib
+        run: ./gradlew jib
 
   deploy:
     needs: build-and-push

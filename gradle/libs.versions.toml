@@ -9,6 +9,7 @@ postgresql = "42.7.5"
 jsoup = "1.19.1"
 micrometer = "1.14.5"
 jib = "3.5.3"
+testcontainers = "1.20.6"
 
 [libraries]
 kotlinx-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -20,6 +21,7 @@ postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" 
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 micrometer-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version.ref = "micrometer" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+testcontainers-postgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

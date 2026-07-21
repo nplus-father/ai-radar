@@ -93,11 +93,29 @@ fun main() = wiki.nplus.airadar.common.App.main("publisher") {
     val snapshotJob = SnapshotJob(repo, contentDir, java.net.http.HttpClient.newHttpClient())
     val snapshotMinutes = Config.int("SNAPSHOT_INTERVAL_MINUTES", 60)
     val settleSeconds = Config.int("SNAPSHOT_SETTLE_SECONDS", 45)
+
+    // When the snapshot loop stops producing, nothing says so: the dashboard
+    // keeps showing the last file it received, and a stale snapshot looks
+    // exactly like a healthy one. That is how the publisher went unnoticed for
+    // 12 hours on 2026-07-19 while the rest of the pipeline was fine. This gauge
+    // is the alertable version of "the snapshot is old" —
+    // `time() - airadar_snapshot_last_success_timestamp_seconds`. A counter
+    // beside it separates "failing loudly" from "thread died".
+    val lastSnapshotSuccess = java.util.concurrent.atomic.AtomicLong(0)
+    io.micrometer.core.instrument.Gauge
+        .builder("airadar_snapshot_last_success_timestamp_seconds", lastSnapshotSuccess) { it.get().toDouble() }
+        .register(registry)
+    val snapshotFailures = registry.counter("airadar_snapshot_failures_total")
+
     kotlin.concurrent.thread(isDaemon = true, name = "metrics-snapshot") {
         Thread.sleep(settleSeconds * 1000L)
         while (true) {
             runCatching { snapshotJob.capture(java.time.Instant.now()) }
-                .onFailure { log.warn("snapshot failed: {}", it.toString()) }
+                .onSuccess { lastSnapshotSuccess.set(System.currentTimeMillis() / 1000) }
+                .onFailure {
+                    snapshotFailures.increment()
+                    log.warn("snapshot failed: {}", it.toString())
+                }
             Thread.sleep(snapshotMinutes * 60_000L)
         }
     }

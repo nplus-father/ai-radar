@@ -27,8 +27,18 @@ addressing.
 
 ## Upgrade / deploy
 
-CI (`.github/workflows/deploy.yml`) builds & pushes all four images with Jib on
-every push to `main`, then deploys over SSH. Manually:
+CI (`.github/workflows/deploy.yml`) runs `./gradlew build` — compile plus the
+whole test suite — before it pushes anything, then builds & pushes all four
+images with Jib on every push to `main` and deploys over SSH. The test step is
+not decorative: the `jib` task graph is compile → jar → push and never runs a
+test, so until it was added a red suite deployed to prod unremarked. A failing
+test now stops the deploy.
+
+The SQL tests need Docker (testcontainers starts a real Postgres and applies
+`db/migrations/`); where Docker is absent they skip rather than fail, so a
+green local `build` on a Docker-less machine has covered less than CI does.
+
+Manually:
 
 ```bash
 cd ~/workspace/bookshelf-echo
@@ -78,6 +88,17 @@ to WARN. Set `LOG_LEVEL=DEBUG` in the host `.env` and restart the one container
 to get the detail back without a rebuild. Before this config existed logback
 defaulted to root=DEBUG and `docker logs` was pool statistics every 30 seconds,
 so grepping for an application line was hopeless.
+
+`airadar_snapshot_last_success_timestamp_seconds` is the publisher's own
+heartbeat: the epoch second of its last successful snapshot, with
+`airadar_snapshot_failures_total` beside it. The grafana rule
+`bookshelf-echo-snapshot-stale` (nplus-infra) fires when
+`time() - <gauge> > 9000` (2.5 hourly intervals) or when the series disappears
+altogether. It exists because the publisher went silent for 12 hours on
+2026-07-19 with the rest of the pipeline healthy, and nothing said so — the
+public dashboard kept serving the last file it had received, so a stale snapshot
+was indistinguishable from a fresh one. The dashboard page now also labels its
+own age.
 
 `airadar_llm_latency_seconds` times every LLM call, tagged `purpose`, `model`
 and `outcome` (ok/error). At one ESSAY call a day, use a 24h window — shorter

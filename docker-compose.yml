@@ -178,6 +178,10 @@ services:
       - ./out/content:/src:ro
       - ../bookshelf-echo-site:/repo
       - ./config/site-publish.sh:/scripts/site-publish.sh:ro
+      # 每輪的成敗寫成 node-exporter textfile 指標給 Grafana 叫。這條管線壞掉時
+      # 是安靜的（容器 Up、publisher 照寫、只有 push 出不去），兩次停更都是靠人
+      # 發現沒收到文章才查出來。目錄是 nplus-infra 的，uid 1000 可寫。
+      - ${SITE_PUBLISH_TEXTFILE_DIR:-../nplus-infra/data/node-exporter-textfile}:/textfile
     environment:
       HOME: /tmp
       SITE_GIT_TOKEN: ${SITE_GIT_TOKEN:?set in .env}
